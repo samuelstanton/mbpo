@@ -1,6 +1,9 @@
 import numpy as np
 import tensorflow as tf
-import pdb
+from mbpo.models.pytorch.dkl_svgp import DeepFeatureSVGP
+from mbpo.models.bnn import BNN
+from scipy.stats import norm as scipy_normal
+
 
 class FakeEnv:
 
@@ -40,25 +43,42 @@ class FakeEnv:
             return_single = False
 
         inputs = np.concatenate((obs, act), axis=-1)
-        ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)
-        ensemble_model_means[:,:,1:] += obs
-        ensemble_model_stds = np.sqrt(ensemble_model_vars)
 
-        if deterministic:
-            ensemble_samples = ensemble_model_means
+        if isinstance(self.model, DeepFeatureSVGP):
+            model_means, model_vars = self.model.predict(inputs, latent=False)
+            likelihood_noise = self.model.likelihood.noise.detach().cpu().numpy()
+            model_means[..., 1:] += obs
+            model_stds = np.sqrt(model_vars)
+
+            if deterministic:
+                samples = model_means
+            else:
+                samples = model_means + np.random.normal(size=model_means.shape) * model_stds
+
+            log_prob = scipy_normal.logpdf(samples, loc=model_means, scale=model_stds).sum(-1)
+            # get epistemic uncertainty
+            dev = np.sqrt(model_vars - likelihood_noise).mean(-1)
+
         else:
-            ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
+            ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)
+            ensemble_model_means[:,:,1:] += obs
+            ensemble_model_stds = np.sqrt(ensemble_model_vars)
 
-        #### choose one model from ensemble
-        num_models, batch_size, _ = ensemble_model_means.shape
-        model_inds = self.model.random_inds(batch_size)
-        batch_inds = np.arange(0, batch_size)
-        samples = ensemble_samples[model_inds, batch_inds]
-        model_means = ensemble_model_means[model_inds, batch_inds]
-        model_stds = ensemble_model_stds[model_inds, batch_inds]
-        ####
+            if deterministic:
+                ensemble_samples = ensemble_model_means
+            else:
+                ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
 
-        log_prob, dev = self._get_logprob(samples, ensemble_model_means, ensemble_model_vars)
+            #### choose one model from ensemble
+            num_models, batch_size, _ = ensemble_model_means.shape
+            model_inds = self.model.random_inds(batch_size)
+            batch_inds = np.arange(0, batch_size)
+            samples = ensemble_samples[model_inds, batch_inds]
+            model_means = ensemble_model_means[model_inds, batch_inds]
+            model_stds = ensemble_model_stds[model_inds, batch_inds]
+            ####
+
+            log_prob, dev = self._get_logprob(samples, ensemble_model_means, ensemble_model_vars)
 
         rewards, next_obs = samples[:,:1], samples[:,1:]
         terminals = self.config.termination_fn(obs, act, next_obs)
@@ -79,6 +99,9 @@ class FakeEnv:
 
     ## for debugging computation graph
     def step_ph(self, obs_ph, act_ph, deterministic=False):
+        if not isinstance(self.model, BNN):
+            raise NotImplementedError
+
         assert len(obs_ph.shape) == len(act_ph.shape)
 
         inputs = tf.concat([obs_ph, act_ph], axis=1)

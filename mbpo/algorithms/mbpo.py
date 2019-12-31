@@ -8,6 +8,7 @@ from numbers import Number
 from itertools import count
 import gtimer as gt
 import pdb
+import torch
 
 import numpy as np
 import tensorflow as tf
@@ -22,6 +23,7 @@ from mbpo.utils.writer import Writer
 from mbpo.utils.visualization import visualize_policy
 from mbpo.utils.logging import Progress
 import mbpo.utils.filesystem as filesystem
+from mbpo.models.pytorch.bnn import PytorchBNN
 
 
 def td_target(reward, discount, next_value):
@@ -97,7 +99,18 @@ class MBPO(RLAlgorithm):
 
         obs_dim = np.prod(training_environment.observation_space.shape)
         act_dim = np.prod(training_environment.action_space.shape)
-        self._model = construct_model(obs_dim=obs_dim, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites)
+        # self._model = construct_model(obs_dim=obs_dim, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites)
+        self._model = PytorchBNN(
+            input_shape=torch.Size([obs_dim + act_dim]),
+            label_shape=torch.Size([1 + obs_dim]),
+            hidden_width=200,
+            hidden_depth=4,
+            ensemble_size=7,
+            minibatch_size=256,
+            lr=1e-3,
+            logvar_penalty_coeff=1e-2,
+            max_epochs_since_update=5,
+        )
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
 
