@@ -1,9 +1,8 @@
-import copy
 import math
 import numpy as np
 import torch
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from torch.optim import Adam
 from gpytorch.distributions.multivariate_normal import MultivariateNormal
 from gpytorch.kernels import RBFKernel, ScaleKernel
@@ -11,17 +10,18 @@ from gpytorch.means import ConstantMean
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.constraints import GreaterThan
 from gpytorch.models import GP
-from gpytorch.variational import VariationalStrategy, MeanFieldVariationalDistribution
+from gpytorch.variational import VariationalStrategy, MeanFieldVariationalDistribution, CholeskyVariationalDistribution
 from gpytorch.mlls import VariationalELBO, PredictiveLogLikelihood
 from mbpo.models.pytorch.fc import PytorchFC
+from sklearn.cluster import MiniBatchKMeans
 
 
 class DeepFeatureSVGP(GP):
     def __init__(
             self,
-            input_size: int,
-            feature_size: int,
-            label_size: int,
+            input_dim: int,
+            feature_dim: int,
+            label_dim: int,
             hidden_width: int or list,
             hidden_depth: int,
             n_inducing: int,
@@ -36,34 +36,53 @@ class DeepFeatureSVGP(GP):
 
         noise_constraint = GreaterThan(1e-4)
         self.likelihood = GaussianLikelihood(
-            batch_shape=torch.Size([label_size]),
+            batch_shape=torch.Size([label_dim]),
             noise_constraint=noise_constraint
         )
 
         self.nn = PytorchFC(
-            input_shape=torch.Size([input_size]),
-            output_shape=torch.Size([feature_size]),
+            input_shape=torch.Size([input_dim]),
+            output_shape=torch.Size([feature_dim]),
             hidden_width=hidden_width,
             depth=hidden_depth,
-            batch_norm=False
+            batch_norm=True
         )
-        self.nn_feature_mean = torch.zeros(feature_size)
-        self.nn_feature_std = torch.ones(feature_size)
-        self.mean_module = ConstantMean(batch_shape=torch.Size([label_size]))
-        base_kernel = RBFKernel(
-            batch_shape=torch.Size([label_size]),
-            ard_num_dims=feature_size
-        )
-        self.covar_module = ScaleKernel(base_kernel, batch_shape=torch.Size([label_size]))
-        self.batch_norm = torch.nn.BatchNorm1d(feature_size)
+        self.batch_norm = torch.nn.BatchNorm1d(feature_dim)
 
-        variational_dist = MeanFieldVariationalDistribution(
-            n_inducing, torch.Size([label_size])
+        self.mean_module = ConstantMean(batch_shape=torch.Size([label_dim]))
+        base_kernel = RBFKernel(
+            batch_shape=torch.Size([label_dim]),
+            ard_num_dims=feature_dim
         )
-        inducing_points = torch.randn(n_inducing, input_size)
+        self.covar_module = ScaleKernel(base_kernel, batch_shape=torch.Size([label_dim]))
+
+        variational_dist = CholeskyVariationalDistribution(
+            num_inducing_points=n_inducing,
+            batch_shape=torch.Size([label_dim])
+        )
+        inducing_points = torch.randn(n_inducing, feature_dim)
         self.variational_strategy = VariationalStrategy(
             self, inducing_points, variational_dist, learn_inducing_locations=True
         )
+
+        # initialize preprocessers
+        self.register_buffer("input_mean", torch.zeros(input_dim))
+        self.register_buffer("input_std", torch.ones(input_dim))
+        self.register_buffer("label_mean", torch.zeros(label_dim))
+        self.register_buffer("label_std", torch.ones(label_dim))
+
+    def forward(self, features):
+        mean = self.mean_module(features)
+        covar = self.covar_module(features)
+        return MultivariateNormal(mean, covar)
+
+    def __call__(self, inputs):
+        features = (inputs - self.input_mean) / self.input_std
+        features = self.nn(features)
+        features = self.batch_norm(features)
+        features = features.expand(self.label_dim, -1, -1)
+
+        return self.variational_strategy(features)
 
     def _train(self):
         return GP.train(self, True)
@@ -71,96 +90,158 @@ class DeepFeatureSVGP(GP):
     def eval(self):
         return GP.train(self, False)
 
-    def forward(self, inputs):
-        features = self.nn(inputs)
-        features = self.batch_norm(features)
-        mean = self.mean_module(features)
-        covar = self.covar_module(features)
+    def _predict_full(self, torch_inputs):
+        with torch.no_grad():
+            pred_dist = self(torch_inputs)
+        mean = pred_dist.mean * self.label_std.view(self.label_dim, 1) + self.label_mean.view(self.label_dim, 1)
+        covar = pred_dist.lazy_covariance_matrix * self.label_std.pow(2).view(self.label_dim, 1, 1)
         return MultivariateNormal(mean, covar)
 
-    def __call__(self, inputs):
-        return self.variational_strategy(inputs)
-
-    def predict(
-            self,
-            inputs: np.ndarray,
-            latent=False
-    ):
-        inputs = torch.tensor(inputs, dtype=torch.get_default_dtype())
+    def predict(self, np_inputs, latent=False):
+        inputs = torch.tensor(np_inputs, dtype=torch.get_default_dtype())
         with torch.no_grad():
-            pred_dist = self(inputs)
-        if not latent:
-            pred_dist = self.likelihood(pred_dist)
-        pred_mean = pred_dist.mean.t().cpu().numpy()
-        pred_var = pred_dist.variance.t().cpu().numpy()
-        return pred_mean, pred_var
+            pred_dist = self(inputs) if latent else self.likelihood(self(inputs))
+        mean = pred_dist.mean * self.label_std.view(self.label_dim, 1) + self.label_mean.view(self.label_dim, 1)
+        var = pred_dist.variance * self.label_std.pow(2).view(self.label_dim, 1)
+        return mean.t().cpu().numpy(), var.t().cpu().numpy()
 
     def train(
-            self,
-            inputs: np.ndarray,
-            labels: np.ndarray,
-            pretrain=False,
-            holdout_ratio=0.,
-            max_epochs=None,
-            max_kl=None,
-            objective='elbo',
-            early_stopping=False,
-            **kwargs
+        self,
+        inputs: np.ndarray,
+        labels: np.ndarray,
+        objective='elbo',
+        max_epochs: int = None,
+        holdout_ratio: float = 0.,
+        normalize: bool = True,
+        early_stopping: bool = False,
+        pretrain: bool = False,
+        reinit_inducing_loc: bool = False,
+        **kwargs
     ):
-        metrics = {
-            'train_loss': [],
-            'holdout_loss': [],
-        }
+        """
+        Train the model on `dataset` by maximizing either the `VariationalELBO` or `PredictiveLogLikelihood` objective.
+        :param dataset: `torch.utils.data.Dataset`
+        Optional Arguments
+        :param objective: `'elbo'` or `'pll'`.
+        :param max_epochs: max number of epochs to train.
+        :param holdout_ratio: proportion of `dataset` to hold out.
+        :param normalize: If `True` normalize training inputs and labels
+        :param early_stopping: If `True`, use holdout loss as convergence criterion.
+                               Requires holdout_ratio > 0.
+        :param pretrain: If `True`, pretrain the feature extractor with the MSE objective.
+                         Requires self.feature_dim == self.label_dim.
+        :param reinit_inducing_loc: If `True`, initialize inducing points with k-means.
+        :return: metrics: `dict` with keys 'train_loss', 'val_loss', 'val_mse'.
+        """
         dataset = torch.utils.data.TensorDataset(
             torch.tensor(inputs, dtype=torch.get_default_dtype()),
             torch.tensor(labels, dtype=torch.get_default_dtype())
         )
-        if pretrain:
-            if self.feature_size == self.label_size:
-                print("pretraining feature extractor")
-                self.nn.fit(dataset)
-            else:
-                raise RuntimeError("features and labels must be the same size to pretrain")
+        if objective == 'elbo':
+            obj_fn = VariationalELBO(self.likelihood, self, num_data=len(dataset))
+        elif objective == 'pll':
+            obj_fn = PredictiveLogLikelihood(self.likelihood, self, num_data=len(dataset), beta=1e-3)
+        else:
+            raise RuntimeError("unrecognized model objective")
 
         if early_stopping and holdout_ratio <= 0.:
-            raise ValueError("holdout dataset required for early stopping")
+            raise RuntimeError("holdout dataset required for early stopping")
 
         n_val = min(int(2048), int(holdout_ratio * len(dataset)))
         if n_val > 0:
             n_train = len(dataset) - n_val
-            train_data, val_data = torch.utils.data.random_split(dataset, [n_train, n_val])
-            val_x, val_y = val_data[:]
+            train_data, holdout_data = torch.utils.data.random_split(dataset, [n_train, n_val])
         else:
-            train_data, val_data = dataset, None
+            train_data, holdout_data = dataset, None
 
-        if max_kl:
-            assert holdout_ratio > 0
-            self.eval()
-            with torch.no_grad():
-                ref_pred = self(val_x)
-                ref_pred = torch.distributions.Normal(ref_pred.mean, ref_pred.variance.sqrt())
+        if normalize:
+            train_inputs, train_labels = train_data[:]
+            self.input_mean, self.input_std = train_inputs.mean(0), train_inputs.std(0)
+            self.label_mean, self.label_std = train_labels.mean(0), train_labels.std(0)
+            train_data = TensorDataset(
+                train_inputs,
+                (train_labels - self.label_mean) / self.label_std
+            )
 
-        dataloader = DataLoader(train_data, batch_size=self.batch_size, shuffle=True)
-        if objective == 'elbo':
-            obj = VariationalELBO(self.likelihood, self, num_data=len(dataset))
-        elif objective == 'pll':
-            obj = PredictiveLogLikelihood(self.likelihood, self, num_data=len(dataset), beta=1e-3)
-        optimizer = Adam(self.optim_param_groups)
+        if pretrain:
+            if self.feature_dim == self.label_dim:
+                print("pretraining feature extractor")
+                self.nn.fit(
+                    dataset=train_data,
+                    holdout_ratio=0.,
+                    early_stopping=False,
+                )
+            else:
+                raise RuntimeError("features and labels must be the same size to pretrain")
 
-        exit_training = False
-        num_batches = math.ceil(len(dataset) / self.batch_size)
-        epoch = 1
-        snapshot = (1, 1e6, self.state_dict())
-        avg_train_loss = None
-        alpha = 2 / (num_batches + 1)
+        if reinit_inducing_loc:
+            print("initializing inducing point locations w/ k-means")
+            train_inputs, _ = train_data[:]
+            self.set_inducing_loc(train_inputs)
 
         print(f"training w/ objective {objective} on {len(train_data)} examples")
+        optimizer = Adam(self.optim_param_groups)
+        snapshot = (1, 1e6, self.state_dict())
+        loop_metrics, snapshot = self._training_loop(
+            train_data,
+            holdout_data,
+            optimizer,
+            obj_fn,
+            snapshot,
+            max_epochs,
+            early_stopping
+        )
+        metrics = loop_metrics
+
+        print("dropping learning rate")
+        for group in optimizer.param_groups:
+            group['lr'] /= 10.
+        loop_metrics, snapshot = self._training_loop(
+            train_data,
+            holdout_data,
+            optimizer,
+            obj_fn,
+            snapshot,
+            max_epochs,
+            early_stopping
+        )
+        for key in metrics.keys():
+            metrics[key] += (loop_metrics[key])
+
+        self.eval()
+        return metrics
+
+    def _training_loop(
+            self,
+            train_dataset,
+            val_dataset,
+            optimizer,
+            obj_fn,
+            snapshot,
+            max_epochs,
+            early_stopping
+    ):
+        metrics = {
+            'train_loss': [],
+            'val_loss': [],
+            'val_mse': [],
+        }
+        exit_training = False
+        num_batches = math.ceil(len(train_dataset) / self.batch_size)
+        epoch = 1
+        avg_train_loss = None
+        alpha = 2 / (num_batches + 1)
+        mse_fn = torch.nn.MSELoss()
+        dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+        if val_dataset:
+            val_x, val_y = val_dataset[:]
+
         while not exit_training:
             self._train()
             for inputs, labels in dataloader:
                 optimizer.zero_grad()
                 out = self(inputs)
-                loss = -obj(out, labels.t()).sum()
+                loss = -obj_fn(out, labels.t()).sum()
                 loss.backward()
                 optimizer.step()
 
@@ -169,45 +250,57 @@ class DeepFeatureSVGP(GP):
                 else:
                     avg_train_loss = loss.detach()
 
-            conv_metric = avg_train_loss
-            if val_data:
+            if val_dataset:
                 with torch.no_grad():
                     self.eval()
-                    holdout_pred = self(val_x)
-                    holdout_loss = -obj(holdout_pred, val_y.t()).sum()
-                    metrics['holdout_loss'].append(holdout_loss)
-                if max_kl:
-                    holdout_pred = torch.distributions.Normal(holdout_pred.mean, holdout_pred.variance.sqrt())
-                    holdout_kl = torch.distributions.kl.kl_divergence(holdout_pred, ref_pred).mean()
+                    val_pred = self._predict_full(val_x)
+                    val_loss = -obj_fn(val_pred, val_y.t()).sum()
+                    metrics['val_loss'].append(val_loss)
+                    metrics['val_mse'].append(mse_fn(val_pred.mean, val_y.t()))
+            conv_metric = val_loss if early_stopping else avg_train_loss
 
-            if early_stopping:
-                conv_metric = holdout_loss
             snapshot, exit_training = self.save_best(snapshot, epoch, conv_metric)
             epoch += 1
             metrics['train_loss'].append(avg_train_loss)
             if exit_training or (max_epochs and epoch == max_epochs):
-                print(f"Training converged after {epoch} epochs, halting")
+                print(f"training converged after {epoch} epochs, halting")
                 break
-            if max_kl and holdout_kl > max_kl:
-                print(f"max kl threshold exceeded, exiting training")
-                break
+
         self.load_state_dict(snapshot[2])
-        self.eval()
-        return metrics
+        if val_dataset:
+            with torch.no_grad():
+                self.eval()
+                val_pred = self._predict_full(val_x)
+                final_mse = mse_fn(val_pred.mean, val_y.t())
+            print(f"final holdout MSE: {final_mse.item():.4f}")
+
+        return metrics, snapshot
 
     def save_best(self, snapshot, epoch, avg_train_loss):
         exit_training = False
         last_update, best_loss, _ = snapshot
-        improvement = (best_loss - avg_train_loss) / max(abs(best_loss), 1.)
-        if improvement > 0.01:
+        improvement = (best_loss - avg_train_loss) / abs(best_loss)
+        if improvement > 0.001:
             snapshot = (epoch, avg_train_loss.item(), self.state_dict())
         if epoch == snapshot[0] + self.max_epochs_since_update:
             exit_training = True
         return snapshot, exit_training
 
-    def set_inducing_loc(self, inputs):
-        idx = torch.randint(0, inputs.shape[0], (self.n_inducing,))
-        self.variational_strategy.inducing_points.data.copy_(inputs[idx])
+    def set_inducing_loc(self, train_inputs):
+        self.eval()
+        np_inputs = train_inputs.cpu().numpy()
+        kmeans = MiniBatchKMeans(
+            n_clusters=self.n_inducing,
+            compute_labels=False,
+            init_size=4 * self.n_inducing
+        )
+        kmeans.fit(np_inputs)
+        centroids = torch.tensor(
+            kmeans.cluster_centers_,
+            dtype=torch.get_default_dtype()
+        )
+        centroids = self.batch_norm(self.nn(centroids))
+        self.variational_strategy.inducing_points.data.copy_(centroids)
 
     def make_copy(self):
         new_model = DeepFeatureSVGP(**self.__dict__)
@@ -231,10 +324,10 @@ class DeepFeatureSVGP(GP):
         }
         other_params = {
             'params': other_params,
-            'lr': 1e-3
+            'lr': 1e-2
         }
         nn_params = {
             'params': nn_params,
-            'lr': 1e-4
+            'lr': 1e-3
         }
         return [gp_params, other_params, nn_params]

@@ -46,9 +46,9 @@ class FakeEnv:
 
         if isinstance(self.model, DeepFeatureSVGP):
             model_means, model_vars = self.model.predict(inputs, latent=False)
-            likelihood_noise = self.model.likelihood.noise.detach().cpu().numpy()
+            likelihood_noise = self.model.likelihood.noise.squeeze().detach().cpu().numpy()
             model_means[..., 1:] += obs
-            model_stds = np.sqrt(model_vars)
+            model_stds = np.sqrt(np.clip(model_vars, a_min=1e-6, a_max=None))
 
             if deterministic:
                 samples = model_means
@@ -57,7 +57,7 @@ class FakeEnv:
 
             log_prob = scipy_normal.logpdf(samples, loc=model_means, scale=model_stds).sum(-1)
             # get epistemic uncertainty
-            dev = np.sqrt(model_vars - likelihood_noise).mean(-1)
+            dev = np.sqrt(np.clip(model_vars - likelihood_noise, a_min=1e-6, a_max=None)).mean(-1)
 
         else:
             ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)

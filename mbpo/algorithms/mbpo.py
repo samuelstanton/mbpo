@@ -99,17 +99,13 @@ class MBPO(RLAlgorithm):
 
         obs_dim = np.prod(training_environment.observation_space.shape)
         act_dim = np.prod(training_environment.action_space.shape)
-        # self._model = construct_model(obs_dim=obs_dim, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites)
-        self._model = PytorchBNN(
-            input_shape=torch.Size([obs_dim + act_dim]),
-            label_shape=torch.Size([1 + obs_dim]),
-            hidden_width=200,
-            hidden_depth=4,
-            ensemble_size=7,
-            minibatch_size=256,
-            lr=1e-3,
-            logvar_penalty_coeff=1e-2,
-            max_epochs_since_update=5,
+        self._model = construct_model(
+            model_type='DeepFeatureSVGP',
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            hidden_dim=hidden_dim,
+            num_networks=num_networks,
+            num_elites=num_elites
         )
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
@@ -240,9 +236,18 @@ class MBPO(RLAlgorithm):
                     
                     self._set_rollout_length()
                     self._reallocate_model_pool()
-                    model_rollout_metrics = self._rollout_model(rollout_batch_size=self._rollout_batch_size, deterministic=self._deterministic)
-                    model_metrics.update(model_rollout_metrics)
-                    
+                    if self._rollout_batch_size > 2048:
+                        for _ in range(self._rollout_batch_size // 2048):
+                            model_rollout_metrics = self._rollout_model(
+                                rollout_batch_size=2048,
+                                deterministic=self._deterministic
+                            )
+                            model_metrics.update(model_rollout_metrics)
+                        model_rollout_metrics = self._rollout_model(
+                            rollout_batch_size=self._rollout_batch_size % 2048,
+                            deterministic=self._deterministic
+                        )
+                        model_metrics.update(model_rollout_metrics)
 
                     gt.stamp('epoch_rollout_model')
                     # self._visualize_model(self._evaluation_environment, self._total_timestep)
@@ -388,7 +393,16 @@ class MBPO(RLAlgorithm):
     def _train_model(self, **kwargs):
         env_samples = self._pool.return_all_samples()
         train_inputs, train_outputs = format_samples_for_training(env_samples)
-        model_metrics = self._model.train(train_inputs, train_outputs, **kwargs)
+        model_metrics = self._model.train(
+            inputs=train_inputs,
+            labels=train_outputs,
+            pretrain=False,
+            objective='elbo',
+            normalize=True,
+            early_stopping=False,
+            reinit_inducing_loc=True,
+            **kwargs
+        )
         return model_metrics
 
     def _rollout_model(self, rollout_batch_size, **kwargs):
