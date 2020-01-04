@@ -397,11 +397,11 @@ class MBPO(RLAlgorithm):
             inputs=train_inputs,
             labels=train_outputs,
             pretrain=False,
-            objective='elbo',
+            objective='pll',
+            holdout_ratio=0.2,
             normalize=True,
             early_stopping=False,
             reinit_inducing_loc=True,
-            **kwargs
         )
         return model_metrics
 

@@ -51,13 +51,14 @@ def construct_model(
 			hidden_depth=4,
 			n_inducing=256,
 			batch_size=256,
-			max_epochs_since_update=4
+			max_epochs_since_update=8
 		)
 
 	else:
 		raise RuntimeError("unrecognized model type")
 
 	return model
+
 
 def format_samples_for_training(samples):
 	obs = samples['observations']
@@ -69,9 +70,11 @@ def format_samples_for_training(samples):
 	outputs = np.concatenate((rew, delta_obs), axis=-1)
 	return inputs, outputs
 
+
 def reset_model(model):
 	model_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=model.name)
 	model.sess.run(tf.initialize_vars(model_vars))
+
 
 if __name__ == '__main__':
 	model = construct_model()

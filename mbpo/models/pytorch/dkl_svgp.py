@@ -56,7 +56,11 @@ class DeepFeatureSVGP(GP):
         )
         self.covar_module = ScaleKernel(base_kernel, batch_shape=torch.Size([label_dim]))
 
-        variational_dist = CholeskyVariationalDistribution(
+        # variational_dist = CholeskyVariationalDistribution(
+        #     num_inducing_points=n_inducing,
+        #     batch_shape=torch.Size([label_dim])
+        # )
+        variational_dist = MeanFieldVariationalDistribution(
             num_inducing_points=n_inducing,
             batch_shape=torch.Size([label_dim])
         )
@@ -288,6 +292,7 @@ class DeepFeatureSVGP(GP):
 
     def set_inducing_loc(self, train_inputs):
         self.eval()
+        train_inputs = (train_inputs - self.input_mean) / self.input_std
         np_inputs = train_inputs.cpu().numpy()
         kmeans = MiniBatchKMeans(
             n_clusters=self.n_inducing,
