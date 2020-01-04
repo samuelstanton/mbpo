@@ -3,7 +3,6 @@ import copy
 import glob
 import pickle
 import sys
-import pdb
 
 import tensorflow as tf
 from ray import tune
@@ -19,6 +18,11 @@ from softlearning.misc.utils import set_seed, initialize_tf_variables
 from examples.instrument import run_example_local
 
 import mbpo.static
+
+import torch
+if torch.cuda.is_available():
+    torch.set_default_tensor_type(torch.cuda.FloatTensor)
+
 
 class ExperimentRunner(tune.Trainable):
     def _setup(self, variant):
