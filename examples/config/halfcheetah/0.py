@@ -29,5 +29,6 @@ params = {
         'target_entropy': -3,
         'max_model_t': None,
         'rollout_schedule': [20, 150, 1, 1],
+        'rand_lengths': False
     }
 }
