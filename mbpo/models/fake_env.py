@@ -3,6 +3,7 @@ import tensorflow as tf
 from mbpo.models.pytorch.dkl_svgp import DeepFeatureSVGP
 from mbpo.models.bnn import BNN
 from scipy.stats import norm as scipy_normal
+from scipy.stats import hmean
 
 
 class FakeEnv:
@@ -46,7 +47,6 @@ class FakeEnv:
 
         if isinstance(self.model, DeepFeatureSVGP):
             model_means, model_vars = self.model.predict(inputs, latent=False)
-            likelihood_noise = self.model.likelihood.noise.squeeze().detach().cpu().numpy()
             model_means[..., 1:] += obs
             model_stds = np.sqrt(np.clip(model_vars, a_min=1e-6, a_max=None))
 
@@ -55,9 +55,17 @@ class FakeEnv:
             else:
                 samples = model_means + np.random.normal(size=model_means.shape) * model_stds
 
-            log_prob = scipy_normal.logpdf(samples, loc=model_means, scale=model_stds).sum(-1)
             # get epistemic uncertainty
-            dev = np.sqrt(np.clip(model_vars - likelihood_noise, a_min=1e-6, a_max=None)).mean(-1)
+            prior_epistemic_var = self.model.covar_module.outputscale.detach().cpu().numpy()
+            likelihood_noise = self.model.likelihood.noise.squeeze().detach().cpu().numpy()
+            post_var = model_vars / self.model.label_std.pow(2).cpu().numpy()
+            post_epistemic_var = np.clip(post_var - likelihood_noise, a_min=1e-8, a_max=None)
+            rel_concentration = np.clip(1 - post_epistemic_var / prior_epistemic_var, a_min=1e-8, a_max=1)
+            accept_probs = hmean(rel_concentration, axis=-1)
+            accept_decision = np.random.binomial(n=1, p=accept_probs)
+
+            log_prob = scipy_normal.logpdf(samples, loc=model_means, scale=model_stds).sum(-1)
+            dev = np.sqrt(post_epistemic_var).mean(-1)
 
         else:
             ensemble_model_means, ensemble_model_vars = self.model.predict(inputs, factored=True)
@@ -78,6 +86,7 @@ class FakeEnv:
             model_stds = ensemble_model_stds[model_inds, batch_inds]
             ####
 
+            accept_decision = np.ones(batch_size, dtype=np.int64)
             log_prob, dev = self._get_logprob(samples, ensemble_model_means, ensemble_model_vars)
 
         rewards, next_obs = samples[:,:1], samples[:,1:]
@@ -95,7 +104,7 @@ class FakeEnv:
             terminals = terminals[0]
 
         info = {'mean': return_means, 'std': return_stds, 'log_prob': log_prob, 'dev': dev}
-        return next_obs, rewards, terminals, info
+        return next_obs, rewards, terminals, info, accept_decision
 
     ## for debugging computation graph
     def step_ph(self, obs_ph, act_ph, deterministic=False):

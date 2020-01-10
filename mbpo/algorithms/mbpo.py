@@ -69,6 +69,7 @@ class MBPO(RLAlgorithm):
             rollout_batch_size=100e3,
             real_ratio=0.1,
             rollout_schedule=[20,100,1,1],
+            rand_lengths=False,
             hidden_dim=200,
             max_model_t=None,
             **kwargs,
@@ -123,6 +124,7 @@ class MBPO(RLAlgorithm):
         self._rollout_batch_size = int(rollout_batch_size)
         self._deterministic = deterministic
         self._real_ratio = real_ratio
+        self._rand_lengths = rand_lengths
 
         self._log_dir = os.getcwd()
         self._writer = Writer(self._log_dir)
@@ -210,7 +212,7 @@ class MBPO(RLAlgorithm):
             self._epoch_before_hook()
             gt.stamp('epoch_before_hook')
 
-            self._training_progress = Progress(self._epoch_length * self._n_train_repeat)
+
             start_samples = self.sampler._total_samples
             for i in count():
                 samples_now = self.sampler._total_samples
@@ -224,7 +226,7 @@ class MBPO(RLAlgorithm):
                 gt.stamp('timestep_before_hook')
 
                 if self._timestep % self._model_train_freq == 0 and self._real_ratio < 1.0:
-                    self._training_progress.pause()
+                    # self._training_progress.pause()
                     print('[ MBPO ] log_dir: {} | ratio: {}'.format(self._log_dir, self._real_ratio))
                     print('[ MBPO ] Training model at epoch {} | freq {} | timestep {} (total: {}) | epoch train steps: {} (total: {})'.format(
                         self._epoch, self._model_train_freq, self._timestep, self._total_timestep, self._train_steps_this_epoch, self._num_train_steps)
@@ -235,23 +237,28 @@ class MBPO(RLAlgorithm):
                     gt.stamp('epoch_train_model')
                     
                     self._set_rollout_length()
-                    self._reallocate_model_pool()
-                    if self._rollout_batch_size > 2048:
-                        for _ in range(self._rollout_batch_size // 2048):
-                            model_rollout_metrics = self._rollout_model(
-                                rollout_batch_size=2048,
-                                deterministic=self._deterministic
-                            )
-                            model_metrics.update(model_rollout_metrics)
+                    self._reallocate_model_pool(self._rand_lengths)
+                    max_batch_size = 4096
+                    n_rollouts = math.ceil(self._rollout_batch_size / max_batch_size)
+                    avg_length = 0
+                    for batch_num in range(1, n_rollouts+1):
+                        if batch_num < n_rollouts or self._rollout_batch_size % max_batch_size == 0:
+                            batch_size = max_batch_size
+                        else:
+                            batch_size = self._rollout_batch_size % max_batch_size
                         model_rollout_metrics = self._rollout_model(
-                            rollout_batch_size=self._rollout_batch_size % 2048,
-                            deterministic=self._deterministic
+                            rollout_batch_size=batch_size,
+                            deterministic=self._deterministic,
+                            rand_lengths=self._rand_lengths
                         )
                         model_metrics.update(model_rollout_metrics)
+                        avg_length += model_rollout_metrics['mean_rollout_length'] / n_rollouts
+                    self._n_train_repeat = math.ceil(avg_length)
+                    self._training_progress = Progress(self._model_train_freq * self._n_train_repeat)
 
                     gt.stamp('epoch_rollout_model')
                     # self._visualize_model(self._evaluation_environment, self._total_timestep)
-                    self._training_progress.resume()
+                    # self._training_progress.resume()
 
                 self._do_sampling(timestep=self._total_timestep)
                 gt.stamp('sample')
@@ -366,12 +373,13 @@ class MBPO(RLAlgorithm):
             self._epoch, min_epoch, max_epoch, self._rollout_length, min_length, max_length
         ))
 
-    def _reallocate_model_pool(self):
+    def _reallocate_model_pool(self, rand_lengths):
         obs_space = self._pool._observation_space
         act_space = self._pool._action_space
 
         rollouts_per_epoch = self._rollout_batch_size * self._epoch_length / self._model_train_freq
-        model_steps_per_epoch = int(self._rollout_length * rollouts_per_epoch)
+        path_length = 1 + self._rollout_length if rand_lengths else self._rollout_length
+        model_steps_per_epoch = int(path_length * rollouts_per_epoch)
         new_pool_size = self._model_retain_epochs * model_steps_per_epoch
 
         if not hasattr(self, '_model_pool'):
@@ -393,6 +401,7 @@ class MBPO(RLAlgorithm):
     def _train_model(self, **kwargs):
         env_samples = self._pool.return_all_samples()
         train_inputs, train_outputs = format_samples_for_training(env_samples)
+        reinit_inducing_loc = True if self._total_timestep % 2000 == 0 else False
         model_metrics = self._model.train(
             inputs=train_inputs,
             labels=train_outputs,
@@ -401,37 +410,54 @@ class MBPO(RLAlgorithm):
             holdout_ratio=0.2,
             normalize=True,
             early_stopping=False,
-            reinit_inducing_loc=True,
+            reinit_inducing_loc=reinit_inducing_loc,
         )
         return model_metrics
 
-    def _rollout_model(self, rollout_batch_size, **kwargs):
-        print('[ Model Rollout ] Starting | Epoch: {} | Rollout length: {} | Batch size: {}'.format(
+    def _rollout_model(self, rollout_batch_size, rand_lengths=False, **kwargs):
+        print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(
             self._epoch, self._rollout_length, rollout_batch_size
         ))
         batch = self.sampler.random_batch(rollout_batch_size)
-        obs = batch['observations']
         steps_added = []
+        rollout_length = np.zeros(rollout_batch_size)
+        if rand_lengths:
+            self._model_pool.add_samples(batch)
+            obs = batch['next_observations']
+            steps_added.append(len(obs))
+            rollout_length += 1
+        else:
+            obs = batch['observations']
+
+        alive = np.ones(rollout_batch_size, dtype=np.int64)
         for i in range(self._rollout_length):
             act = self._policy.actions_np(obs)
-            
-            next_obs, rew, term, info = self.fake_env.step(obs, act, **kwargs)
-            steps_added.append(len(obs))
+            next_obs, rew, term, info, accept_decision = self.fake_env.step(obs, act, **kwargs)
 
-            samples = {'observations': obs, 'actions': act, 'next_observations': next_obs, 'rewards': rew, 'terminals': term}
-            self._model_pool.add_samples(samples)
-
-            nonterm_mask = ~term.squeeze(-1)
-            if nonterm_mask.sum() == 0:
-                print('[ Model Rollout ] Breaking early: {} | {} / {}'.format(i, nonterm_mask.sum(), nonterm_mask.shape))
+            if rand_lengths:
+                alive *= accept_decision
+            alive_mask = np.where(alive == 1)
+            if np.any(alive == 1):
+                steps_added.append(len(obs[alive_mask]))
+                rollout_length[alive_mask] += 1
+                samples = {
+                    'observations': obs[alive_mask],
+                    'actions': act[alive_mask],
+                    'next_observations': next_obs[alive_mask],
+                    'rewards': rew[alive_mask],
+                    'terminals': term[alive_mask]
+                }
+                self._model_pool.add_samples(samples)
+            else:
                 break
 
-            obs = next_obs[nonterm_mask]
+            alive *= ~term.squeeze(-1)
+            obs = next_obs
 
-        mean_rollout_length = sum(steps_added) / rollout_batch_size
+        mean_rollout_length = rollout_length.mean().item()
         rollout_stats = {'mean_rollout_length': mean_rollout_length}
-        print('[ Model Rollout ] Added: {:.1e} | Model pool: {:.1e} (max {:.1e}) | Length: {} | Train rep: {}'.format(
-            sum(steps_added), self._model_pool.size, self._model_pool._max_size, mean_rollout_length, self._n_train_repeat
+        print('[ Model Rollout ] Added: {:.1e} | Model Pool: {:.1e} (max {:.1e}) | Avg Length: {:.2f}'.format(
+            sum(steps_added), self._model_pool.size, self._model_pool._max_size, mean_rollout_length
         ))
         return rollout_stats
 

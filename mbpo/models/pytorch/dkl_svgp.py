@@ -186,18 +186,21 @@ class DeepFeatureSVGP(GP):
         print(f"training w/ objective {objective} on {len(train_data)} examples")
         optimizer = Adam(self.optim_param_groups)
         snapshot = (1, 1e6, self.state_dict())
-        loop_metrics, snapshot = self._training_loop(
-            train_data,
-            holdout_data,
-            optimizer,
-            obj_fn,
-            snapshot,
-            max_epochs,
-            early_stopping
-        )
-        metrics = loop_metrics
+        if reinit_inducing_loc:
+            self.max_epochs_since_update *= 2
+            loop_metrics, snapshot = self._training_loop(
+                train_data,
+                holdout_data,
+                optimizer,
+                obj_fn,
+                snapshot,
+                max_epochs,
+                early_stopping
+            )
+            metrics = loop_metrics
+            self.max_epochs_since_update /= 2
+            print("dropping learning rate")
 
-        print("dropping learning rate")
         for group in optimizer.param_groups:
             group['lr'] /= 10.
         loop_metrics, snapshot = self._training_loop(
@@ -209,8 +212,12 @@ class DeepFeatureSVGP(GP):
             max_epochs,
             early_stopping
         )
-        for key in metrics.keys():
-            metrics[key] += (loop_metrics[key])
+        print(f"training converged after {snapshot[0]} epochs, halting")
+        if reinit_inducing_loc:
+            for key in metrics.keys():
+                metrics[key] += (loop_metrics[key])
+        else:
+            metrics = loop_metrics
 
         self.eval()
         return metrics
@@ -232,7 +239,7 @@ class DeepFeatureSVGP(GP):
         }
         exit_training = False
         num_batches = math.ceil(len(train_dataset) / self.batch_size)
-        epoch = 1
+        epoch = snapshot[0]
         avg_train_loss = None
         alpha = 2 / (num_batches + 1)
         mse_fn = torch.nn.MSELoss()
@@ -243,6 +250,8 @@ class DeepFeatureSVGP(GP):
         while not exit_training:
             self._train()
             for inputs, labels in dataloader:
+                if inputs.shape[0] <= 1:
+                    continue
                 optimizer.zero_grad()
                 out = self(inputs)
                 loss = -obj_fn(out, labels.t()).sum()
@@ -267,7 +276,6 @@ class DeepFeatureSVGP(GP):
             epoch += 1
             metrics['train_loss'].append(avg_train_loss)
             if exit_training or (max_epochs and epoch == max_epochs):
-                print(f"training converged after {epoch} epochs, halting")
                 break
 
         self.load_state_dict(snapshot[2])
