@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'select_aug',
+    'exp_name': 'select_aug/max_length_32',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -20,7 +20,7 @@ params = {
         'reward_scale': 1.0,
 
         'model_train_freq': 250,
-        'model_retain_epochs': 1,
+        'model_retain_epochs': 0.5,
         'rollout_batch_size': 8192,
         'deterministic': False,
         'num_networks': 7,
@@ -28,7 +28,7 @@ params = {
         'real_ratio': 0.0,
         'target_entropy': -3,
         'max_model_t': None,
-        'rollout_schedule': [20, 150, 20, 20],
+        'rollout_schedule': [20, 150, 32, 32],
         'rand_lengths': True
     }
 }

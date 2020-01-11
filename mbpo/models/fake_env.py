@@ -61,7 +61,8 @@ class FakeEnv:
             post_var = model_vars / self.model.label_std.pow(2).cpu().numpy()
             post_epistemic_var = np.clip(post_var - likelihood_noise, a_min=1e-8, a_max=None)
             rel_concentration = np.clip(1 - post_epistemic_var / prior_epistemic_var, a_min=1e-8, a_max=1)
-            accept_probs = hmean(rel_concentration, axis=-1)
+            # accept_probs = hmean(rel_concentration, axis=-1)
+            accept_probs = rel_concentration.mean(-1)
             accept_decision = np.random.binomial(n=1, p=accept_probs)
 
             log_prob = scipy_normal.logpdf(samples, loc=model_means, scale=model_stds).sum(-1)

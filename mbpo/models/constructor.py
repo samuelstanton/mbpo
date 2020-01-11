@@ -49,7 +49,7 @@ def construct_model(
 			label_dim=rew_dim + obs_dim,
 			hidden_width=hidden_dim,
 			hidden_depth=4,
-			n_inducing=256,
+			n_inducing=512,
 			batch_size=256,
 			max_epochs_since_update=4
 		)

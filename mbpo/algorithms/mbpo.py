@@ -402,7 +402,7 @@ class MBPO(RLAlgorithm):
     def _train_model(self, **kwargs):
         env_samples = self._pool.return_all_samples()
         train_inputs, train_outputs = format_samples_for_training(env_samples)
-        reinit_inducing_loc = True if self._total_timestep % 2000 == 0 else False
+        reinit_inducing_loc = True if self._total_timestep == 0 else False
         model_metrics = self._model.train(
             inputs=train_inputs,
             labels=train_outputs,
