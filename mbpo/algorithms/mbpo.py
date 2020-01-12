@@ -253,8 +253,8 @@ class MBPO(RLAlgorithm):
                         )
                         model_metrics.update(model_rollout_metrics)
                         avg_length += model_rollout_metrics['mean_rollout_length'] / n_rollouts
-                    if self._rand_lengths:
-                        self._n_train_repeat = math.ceil(avg_length)
+                    # if self._rand_lengths:
+                    #     self._n_train_repeat = math.ceil(avg_length)
                     self._training_progress = Progress(self._model_train_freq * self._n_train_repeat)
 
                     gt.stamp('epoch_rollout_model')

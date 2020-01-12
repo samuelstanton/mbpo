@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'select_aug/max_length_32',
+    'exp_name': 'select_aug/geom_max_32_n_train_repeats_20',
 
     'kwargs': {
         'epoch_length': 1000,
