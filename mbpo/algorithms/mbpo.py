@@ -410,7 +410,7 @@ class MBPO(RLAlgorithm):
             objective='pll',
             holdout_ratio=0.2,
             normalize=True,
-            early_stopping=False,
+            early_stopping=True,
             reinit_inducing_loc=reinit_inducing_loc,
         )
         return model_metrics
@@ -422,21 +422,19 @@ class MBPO(RLAlgorithm):
         batch = self.sampler.random_batch(rollout_batch_size)
         steps_added = []
         rollout_length = np.zeros(rollout_batch_size)
-        if rand_lengths:
-            self._model_pool.add_samples(batch)
-            obs = batch['next_observations']
-            steps_added.append(len(obs))
-            rollout_length += 1
-        else:
-            obs = batch['observations']
+        # if rand_lengths:
+        #     self._model_pool.add_samples(batch)
+        #     obs = batch['next_observations']
+        #     steps_added.append(len(obs))
+        #     rollout_length += 1
+        # else:
+        obs = batch['observations']
 
         alive = np.ones(rollout_batch_size, dtype=np.int64)
         for i in range(self._rollout_length):
             act = self._policy.actions_np(obs)
             next_obs, rew, term, info, accept_decision = self.fake_env.step(obs, act, **kwargs)
 
-            if rand_lengths:
-                alive *= accept_decision
             alive_mask = np.where(alive == 1)
             if np.any(alive == 1):
                 steps_added.append(len(obs[alive_mask]))
@@ -452,6 +450,8 @@ class MBPO(RLAlgorithm):
             else:
                 break
 
+            if rand_lengths:
+                alive *= accept_decision
             alive *= ~term.squeeze(-1)
             obs = next_obs
 

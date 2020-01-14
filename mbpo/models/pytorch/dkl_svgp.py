@@ -151,7 +151,7 @@ class DeepFeatureSVGP(GP):
         if early_stopping and holdout_ratio <= 0.:
             raise RuntimeError("holdout dataset required for early stopping")
 
-        n_val = min(int(2048), int(holdout_ratio * len(dataset)))
+        n_val = min(int(5000), int(holdout_ratio * len(dataset)))
         if n_val > 0:
             n_train = len(dataset) - n_val
             train_data, holdout_data = torch.utils.data.random_split(dataset, [n_train, n_val])

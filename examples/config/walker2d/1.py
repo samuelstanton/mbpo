@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'select_aug/geom_max_32_n_train_repeats_20',
+    'exp_name': 'select_aug/n_inducing_256',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -21,14 +21,14 @@ params = {
 
         'model_train_freq': 250,
         'model_retain_epochs': 0.5,
-        'rollout_batch_size': 8192,
+        'rollout_batch_size': 16384,
         'deterministic': False,
         'num_networks': 7,
         'num_elites': 5,
-        'real_ratio': 0.0,
+        'real_ratio': 0.05,
         'target_entropy': -3,
         'max_model_t': None,
-        'rollout_schedule': [20, 150, 32, 32],
+        'rollout_schedule': [20, 150, 16, 16],
         'rand_lengths': True
     }
 }
