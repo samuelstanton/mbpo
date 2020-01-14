@@ -301,7 +301,8 @@ class BNN:
 
     def train(self, inputs, targets,
               batch_size=32, max_epochs=None, max_epochs_since_update=5,
-              hide_progress=False, holdout_ratio=0.0, max_logging=5000, max_grad_updates=None, timer=None, max_t=None):
+              hide_progress=False, holdout_ratio=0.0, max_logging=5000, max_grad_updates=None, timer=None, max_t=None,
+              **kwargs):
         """Trains/Continues network training
 
         Arguments:

@@ -1,16 +1,16 @@
 params = {
     'type': 'MBPO',
     'universe': 'gym',
-    'domain': 'HalfCheetah',
+    'domain': 'Walker2d',
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'select_aug',
+    'exp_name': 'baseline_svgp',
 
     'kwargs': {
         'epoch_length': 1000,
         'train_every_n_steps': 1,
-        'n_train_repeat': 40,
+        'n_train_repeat': 20,
         'eval_render_mode': None,
         'eval_n_episodes': 1,
         'eval_deterministic': True,
@@ -20,16 +20,16 @@ params = {
         'reward_scale': 1.0,
 
         'model_train_freq': 250,
-        'model_retain_epochs': 0.5,
-        'rollout_batch_size': 16384,
+        'model_retain_epochs': 1,
+        'rollout_batch_size': 100e3,
         'deterministic': False,
         'num_networks': 7,
         'num_elites': 5,
         'real_ratio': 0.05,
         'target_entropy': -3,
         'max_model_t': None,
-        'rollout_schedule': [20, 150, 16, 16],
-        'rand_lengths': True,
+        'rollout_schedule': [20, 150, 1, 1],
+        'rand_lengths': False,
         'model_type': 'DeepFeatureSVGP'
     }
 }

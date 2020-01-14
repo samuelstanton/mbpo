@@ -136,7 +136,7 @@ class PytorchBNN(Module):
     def train(
             self,
             inputs: np.ndarray,
-            labels: np.ndarray,
+            targets: np.ndarray,
             holdout_ratio=0.2,
             max_epochs=None,
             max_kl=None,
@@ -151,7 +151,7 @@ class PytorchBNN(Module):
         }
         dataset = torch.utils.data.TensorDataset(
             torch.tensor(inputs, dtype=torch.get_default_dtype()),
-            torch.tensor(labels, dtype=torch.get_default_dtype())
+            torch.tensor(targets, dtype=torch.get_default_dtype())
         )
         n_val = min(int(5e3), int(holdout_ratio * len(dataset)))
         n_train = len(dataset) - n_val
@@ -205,10 +205,10 @@ class PytorchBNN(Module):
                 min_logvar = getattr(network, f"min_logvar")
                 optimizer = torch.optim.Adam(network.optim_param_groups, lr=self._lr)
 
-                for inputs, labels in dataloader:
+                for inputs, targets in dataloader:
                     optimizer.zero_grad()
                     pred_dist = self.forward(inputs, idx)
-                    likelihood = pred_dist.log_prob(labels.t()).mean()
+                    likelihood = pred_dist.log_prob(targets.t()).mean()
                     penalty_coeff = self._logvar_penalty_coeff
                     loss = -likelihood + penalty_coeff * (max_logvar - min_logvar).sum()
                     loss.backward()

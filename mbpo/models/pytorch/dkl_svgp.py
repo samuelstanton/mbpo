@@ -112,7 +112,7 @@ class DeepFeatureSVGP(GP):
     def train(
         self,
         inputs: np.ndarray,
-        labels: np.ndarray,
+        targets: np.ndarray,
         objective='elbo',
         max_epochs: int = None,
         holdout_ratio: float = 0.,
@@ -139,7 +139,7 @@ class DeepFeatureSVGP(GP):
         """
         dataset = torch.utils.data.TensorDataset(
             torch.tensor(inputs, dtype=torch.get_default_dtype()),
-            torch.tensor(labels, dtype=torch.get_default_dtype())
+            torch.tensor(targets, dtype=torch.get_default_dtype())
         )
         if objective == 'elbo':
             obj_fn = VariationalELBO(self.likelihood, self, num_data=len(dataset))

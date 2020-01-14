@@ -68,8 +68,9 @@ class MBPO(RLAlgorithm):
             model_retain_epochs=20,
             rollout_batch_size=100e3,
             real_ratio=0.1,
-            rollout_schedule=[20,100,1,1],
+            rollout_schedule=[20, 100, 1, 1],
             rand_lengths=False,
+            model_type='TensorflowBNN',
             hidden_dim=200,
             max_model_t=None,
             **kwargs,
@@ -101,13 +102,14 @@ class MBPO(RLAlgorithm):
         obs_dim = np.prod(training_environment.observation_space.shape)
         act_dim = np.prod(training_environment.action_space.shape)
         self._model = construct_model(
-            model_type='DeepFeatureSVGP',
+            model_type=model_type,
             obs_dim=obs_dim,
             act_dim=act_dim,
             hidden_dim=hidden_dim,
             num_networks=num_networks,
             num_elites=num_elites
         )
+        self._max_batch_size = 4096 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
 
@@ -238,7 +240,7 @@ class MBPO(RLAlgorithm):
                     
                     self._set_rollout_length()
                     self._reallocate_model_pool(self._rand_lengths)
-                    max_batch_size = 4096
+                    max_batch_size = self._max_batch_size
                     n_rollouts = math.ceil(self._rollout_batch_size / max_batch_size)
                     avg_length = 0
                     for batch_num in range(1, n_rollouts+1):
@@ -405,7 +407,7 @@ class MBPO(RLAlgorithm):
         reinit_inducing_loc = True if self._total_timestep == 0 else False
         model_metrics = self._model.train(
             inputs=train_inputs,
-            labels=train_outputs,
+            targets=train_outputs,
             pretrain=False,
             objective='pll',
             holdout_ratio=0.2,

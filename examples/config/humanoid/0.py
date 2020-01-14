@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'defaults',
+    'exp_name': 'baseline_deep_ensemble',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -30,5 +30,7 @@ params = {
         'max_model_t': None,
         'rollout_schedule': [20, 300, 1, 20],
         'hidden_dim': 400,
+        'rand_lengths': False,
+        'model_type': 'TensorflowBNN'
     }
 }
