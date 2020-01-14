@@ -169,7 +169,7 @@ class DeepFeatureSVGP(GP):
 
         if pretrain:
             if self.feature_dim == self.label_dim:
-                print("pretraining feature extractor")
+                print("[ SVGP ] pretraining feature extractor")
                 self.nn.fit(
                     dataset=train_data,
                     holdout_ratio=0.,
@@ -179,13 +179,19 @@ class DeepFeatureSVGP(GP):
                 raise RuntimeError("features and labels must be the same size to pretrain")
 
         if reinit_inducing_loc:
-            print("initializing inducing point locations w/ k-means")
+            print("[ SVGP ] initializing inducing point locations w/ k-means")
             train_inputs, _ = train_data[:]
             self.set_inducing_loc(train_inputs)
 
-        print(f"training w/ objective {objective} on {len(train_data)} examples")
+        print(f"[ SVGP ] training w/ objective {objective} on {len(train_data)} examples")
         optimizer = Adam(self.optim_param_groups)
-        snapshot = (1, 1e6, self.state_dict())
+
+        if early_stopping:
+            val_x, val_y = holdout_data[:]
+            val_loss, _ = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
+        snapshot_loss = val_loss if early_stopping else 1e6
+        snapshot = (1, snapshot_loss, self.state_dict())
+
         if reinit_inducing_loc:
             self.max_epochs_since_update *= 2
             loop_metrics, snapshot = self._training_loop(
@@ -199,7 +205,7 @@ class DeepFeatureSVGP(GP):
             )
             metrics = loop_metrics
             self.max_epochs_since_update /= 2
-            print("dropping learning rate")
+            print("[ SVGP ] dropping learning rate")
 
         for group in optimizer.param_groups:
             group['lr'] /= 10.
@@ -212,7 +218,7 @@ class DeepFeatureSVGP(GP):
             max_epochs,
             early_stopping
         )
-        print(f"training converged after {snapshot[0]} epochs, halting")
+        print(f"[ SVGP ] training converged after {snapshot[0]} epochs, halting")
         if reinit_inducing_loc:
             for key in metrics.keys():
                 metrics[key] += (loop_metrics[key])
@@ -264,13 +270,10 @@ class DeepFeatureSVGP(GP):
                     avg_train_loss = loss.detach()
 
             if val_dataset:
-                with torch.no_grad():
-                    self.eval()
-                    val_pred = self._predict_full(val_x)
-                    val_loss = -obj_fn(val_pred, val_y.t()).sum()
-                    metrics['val_loss'].append(val_loss)
-                    metrics['val_mse'].append(mse_fn(val_pred.mean, val_y.t()))
-            conv_metric = val_loss if early_stopping else avg_train_loss
+                val_loss, val_mse = self._get_val_metrics(obj_fn, mse_fn, val_x, val_y)
+                metrics['val_loss'].append(val_loss)
+                metrics['val_mse'].append(val_mse)
+            conv_metric = val_loss if early_stopping else avg_train_loss.item()
 
             snapshot, exit_training = self.save_best(snapshot, epoch, conv_metric)
             epoch += 1
@@ -280,20 +283,26 @@ class DeepFeatureSVGP(GP):
 
         self.load_state_dict(snapshot[2])
         if val_dataset:
-            with torch.no_grad():
-                self.eval()
-                val_pred = self._predict_full(val_x)
-                final_mse = mse_fn(val_pred.mean, val_y.t())
-            print(f"final holdout MSE: {final_mse.item():.4f}")
+            _, final_mse = self._get_val_metrics(obj_fn, mse_fn, val_x, val_y)
+            metrics['val_mse'].append(final_mse)
+            print(f"[ SVGP ] holdout mse: {final_mse:.4f}")
 
         return metrics, snapshot
 
-    def save_best(self, snapshot, epoch, avg_train_loss):
+    def _get_val_metrics(self, obj_fn, mse_fn, val_x, val_y):
+        with torch.no_grad():
+            self.eval()
+            val_pred = self._predict_full(val_x)
+            val_mse = mse_fn(val_pred.mean, val_y.t())
+            val_loss = -obj_fn(val_pred, val_y.t()).sum()
+        return [val_loss.item(), val_mse.item()]
+
+    def save_best(self, snapshot, epoch, current_loss):
         exit_training = False
         last_update, best_loss, _ = snapshot
-        improvement = (best_loss - avg_train_loss) / abs(best_loss)
+        improvement = (best_loss - current_loss) / abs(best_loss)
         if improvement > 0.001:
-            snapshot = (epoch, avg_train_loss.item(), self.state_dict())
+            snapshot = (epoch, current_loss, self.state_dict())
         if epoch == snapshot[0] + self.max_epochs_since_update:
             exit_training = True
         return snapshot, exit_training

@@ -415,7 +415,7 @@ class MBPO(RLAlgorithm):
             early_stopping=True,
             reinit_inducing_loc=reinit_inducing_loc,
         )
-        return model_metrics
+        return {'val_mse': model_metrics['val_mse'][-1]}
 
     def _rollout_model(self, rollout_batch_size, rand_lengths=False, **kwargs):
         print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(
