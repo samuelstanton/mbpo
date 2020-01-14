@@ -184,7 +184,6 @@ class DeepFeatureSVGP(GP):
             self.set_inducing_loc(train_inputs)
 
         print(f"[ SVGP ] training w/ objective {objective} on {len(train_data)} examples")
-        optimizer = Adam(self.optim_param_groups)
 
         if early_stopping:
             val_x, val_y = holdout_data[:]
@@ -193,6 +192,7 @@ class DeepFeatureSVGP(GP):
         snapshot = (1, snapshot_loss, self.state_dict())
 
         if reinit_inducing_loc:
+            optimizer = Adam(self.optim_param_groups)
             self.max_epochs_since_update *= 2
             loop_metrics, snapshot = self._training_loop(
                 train_data,
@@ -207,8 +207,7 @@ class DeepFeatureSVGP(GP):
             self.max_epochs_since_update /= 2
             print("[ SVGP ] dropping learning rate")
 
-        for group in optimizer.param_groups:
-            group['lr'] /= 10.
+        optimizer = Adam(self.parameters(), lr=5e-4)
         loop_metrics, snapshot = self._training_loop(
             train_data,
             holdout_data,
