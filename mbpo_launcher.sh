@@ -16,6 +16,7 @@ echo ${exp_name}
 conda activate root
 tmux new -d -s "${exp_name}"
 tmux send-keys -t "${exp_name}" "conda activate mbpo" Enter
+tmux send-keys -t "${exp_name}" "export OPT_NUM_THREADS=4" Enter
 tmux send-keys -t "${exp_name}" "export CUDA_VISIBLE_DEVICES=${device}" Enter
 launch_cmd="mbpo run_local examples.development --config=examples.config.${env}.${variant} --gpus=1 --trial-gpus=1"
 tmux send-keys -t "$exp_name" "$launch_cmd" Enter
