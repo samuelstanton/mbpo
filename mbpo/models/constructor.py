@@ -47,7 +47,7 @@ def construct_model(
 			input_dim=obs_dim + act_dim,
 			feature_dim=rew_dim + obs_dim,
 			label_dim=rew_dim + obs_dim,
-			hidden_width=2048,
+			hidden_width=hidden_dim,
 			hidden_depth=2,
 			n_inducing=256,
 			batch_size=256,

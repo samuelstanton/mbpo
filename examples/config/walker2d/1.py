@@ -30,6 +30,7 @@ params = {
         'max_model_t': None,
         'rollout_schedule': [20, 150, 16, 16],
         'rand_lengths': True,
-        'model_type': 'DeepFeatureSVGP'
+        'model_type': 'DeepFeatureSVGP',
+        'hidden_dim': 512,
     }
 }
