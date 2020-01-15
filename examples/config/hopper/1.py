@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'select_aug',
+    'exp_name': 'select_aug_v2',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -20,7 +20,7 @@ params = {
         'reward_scale': 1.0,
 
         'model_train_freq': 250,
-        'model_retain_epochs': 0.5,
+        'model_retain_epochs': 0.25,
         'rollout_batch_size': 16384,
         'deterministic': False,
         'num_networks': 7,
