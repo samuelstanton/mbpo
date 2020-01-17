@@ -2,6 +2,8 @@ import math
 import numpy as np
 import torch
 
+from copy import deepcopy
+
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim import Adam
 from gpytorch.distributions.multivariate_normal import MultivariateNormal
@@ -10,7 +12,7 @@ from gpytorch.means import ConstantMean
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.constraints import GreaterThan
 from gpytorch.models import GP
-from gpytorch.variational import VariationalStrategy, MeanFieldVariationalDistribution, CholeskyVariationalDistribution
+from gpytorch.variational import VariationalStrategy, MeanFieldVariationalDistribution, DecoupledVariationalStrategy
 from gpytorch.mlls import VariationalELBO, PredictiveLogLikelihood
 from mbpo.models.pytorch.fc import PytorchFC
 from sklearn.cluster import MiniBatchKMeans
@@ -56,16 +58,12 @@ class DeepFeatureSVGP(GP):
         )
         self.covar_module = ScaleKernel(base_kernel, batch_shape=torch.Size([label_dim]))
 
-        # variational_dist = CholeskyVariationalDistribution(
-        #     num_inducing_points=n_inducing,
-        #     batch_shape=torch.Size([label_dim])
-        # )
         variational_dist = MeanFieldVariationalDistribution(
             num_inducing_points=n_inducing,
             batch_shape=torch.Size([label_dim])
         )
         inducing_points = torch.randn(n_inducing, feature_dim)
-        self.variational_strategy = VariationalStrategy(
+        self.variational_strategy = DecoupledVariationalStrategy(
             self, inducing_points, variational_dist, learn_inducing_locations=True
         )
 
@@ -150,13 +148,18 @@ class DeepFeatureSVGP(GP):
 
         if early_stopping and holdout_ratio <= 0.:
             raise RuntimeError("holdout dataset required for early stopping")
-
-        n_val = min(int(5000), int(holdout_ratio * len(dataset)))
+        n_val = min(int(2048), int(holdout_ratio * len(dataset)))
         if n_val > 0:
             n_train = len(dataset) - n_val
             train_data, holdout_data = torch.utils.data.random_split(dataset, [n_train, n_val])
         else:
             train_data, holdout_data = dataset, None
+
+        if early_stopping:
+            val_x, val_y = holdout_data[:]
+            val_loss, _ = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
+        snapshot_loss = val_loss if early_stopping else 1e6
+        snapshot = (0, snapshot_loss, deepcopy(self.state_dict()))
 
         if normalize:
             train_inputs, train_labels = train_data[:]
@@ -184,15 +187,8 @@ class DeepFeatureSVGP(GP):
             self.set_inducing_loc(train_inputs)
 
         print(f"[ SVGP ] training w/ objective {objective} on {len(train_data)} examples")
-
-        if early_stopping:
-            val_x, val_y = holdout_data[:]
-            val_loss, _ = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
-        snapshot_loss = val_loss if early_stopping else 1e6
-        snapshot = (1, snapshot_loss, self.state_dict())
-
+        optimizer = Adam(self.optim_param_groups)
         if reinit_inducing_loc:
-            optimizer = Adam(self.optim_param_groups)
             self.max_epochs_since_update *= 2
             loop_metrics, snapshot = self._training_loop(
                 train_data,
@@ -207,7 +203,8 @@ class DeepFeatureSVGP(GP):
             self.max_epochs_since_update /= 2
             print("[ SVGP ] dropping learning rate")
 
-        optimizer = Adam(self.parameters(), lr=5e-4)
+        for group in optimizer.param_groups:
+            group['lr'] /= 10
         loop_metrics, snapshot = self._training_loop(
             train_data,
             holdout_data,
@@ -224,6 +221,7 @@ class DeepFeatureSVGP(GP):
         else:
             metrics = loop_metrics
 
+        del snapshot, dataset
         self.eval()
         return metrics
 
@@ -244,7 +242,7 @@ class DeepFeatureSVGP(GP):
         }
         exit_training = False
         num_batches = math.ceil(len(train_dataset) / self.batch_size)
-        epoch = snapshot[0]
+        epoch = snapshot[0] + 1
         avg_train_loss = None
         alpha = 2 / (num_batches + 1)
         mse_fn = torch.nn.MSELoss()
@@ -301,7 +299,7 @@ class DeepFeatureSVGP(GP):
         last_update, best_loss, _ = snapshot
         improvement = (best_loss - current_loss) / abs(best_loss)
         if improvement > 0.001:
-            snapshot = (epoch, current_loss, self.state_dict())
+            snapshot = (epoch, current_loss, deepcopy(self.state_dict()))
         if epoch == snapshot[0] + self.max_epochs_since_update:
             exit_training = True
         return snapshot, exit_training
@@ -341,14 +339,14 @@ class DeepFeatureSVGP(GP):
 
         gp_params = {
             'params': gp_params,
-            'lr': 1e-2
+            'lr': 5e-2
         }
         other_params = {
             'params': other_params,
-            'lr': 1e-2
+            'lr': 5e-2
         }
         nn_params = {
             'params': nn_params,
-            'lr': 1e-3
+            'lr': 5e-3
         }
         return [gp_params, other_params, nn_params]

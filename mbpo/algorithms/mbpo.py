@@ -7,7 +7,6 @@ from collections import OrderedDict
 from numbers import Number
 from itertools import count
 import gtimer as gt
-import pdb
 import torch
 
 import numpy as np
@@ -72,6 +71,7 @@ class MBPO(RLAlgorithm):
             rand_lengths=False,
             model_type='TensorflowBNN',
             hidden_dim=200,
+            n_inducing=256,
             max_model_t=None,
             **kwargs,
     ):
@@ -106,10 +106,11 @@ class MBPO(RLAlgorithm):
             obs_dim=obs_dim,
             act_dim=act_dim,
             hidden_dim=hidden_dim,
+            n_inducing=n_inducing,
             num_networks=num_networks,
             num_elites=num_elites
         )
-        self._max_batch_size = 4096 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
+        self._max_batch_size = 2096 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
 
@@ -214,7 +215,6 @@ class MBPO(RLAlgorithm):
             self._epoch_before_hook()
             gt.stamp('epoch_before_hook')
 
-
             start_samples = self.sampler._total_samples
             for i in count():
                 samples_now = self.sampler._total_samples
@@ -237,9 +237,13 @@ class MBPO(RLAlgorithm):
                     model_train_metrics = self._train_model(batch_size=256, max_epochs=None, holdout_ratio=0.2, max_t=self._max_model_t)
                     model_metrics.update(model_train_metrics)
                     gt.stamp('epoch_train_model')
-                    
+
                     self._set_rollout_length()
                     self._reallocate_model_pool(self._rand_lengths)
+                    print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(
+                        self._epoch, self._rollout_length, self._rollout_batch_size
+                    ))
+
                     max_batch_size = self._max_batch_size
                     n_rollouts = math.ceil(self._rollout_batch_size / max_batch_size)
                     avg_length = 0
@@ -418,9 +422,9 @@ class MBPO(RLAlgorithm):
         return {'val_mse': model_metrics['val_mse'][-1]}
 
     def _rollout_model(self, rollout_batch_size, rand_lengths=False, **kwargs):
-        print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(
-            self._epoch, self._rollout_length, rollout_batch_size
-        ))
+        # print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(
+        #     self._epoch, self._rollout_length, rollout_batch_size
+        # ))
         batch = self.sampler.random_batch(rollout_batch_size)
         steps_added = []
         rollout_length = np.zeros(rollout_batch_size)
@@ -435,7 +439,8 @@ class MBPO(RLAlgorithm):
         alive = np.ones(rollout_batch_size, dtype=np.int64)
         for i in range(self._rollout_length):
             act = self._policy.actions_np(obs)
-            next_obs, rew, term, info, accept_decision = self.fake_env.step(obs, act, **kwargs)
+            with torch.no_grad():
+                next_obs, rew, term, info, accept_decision = self.fake_env.step(obs, act, **kwargs)
 
             alive_mask = np.where(alive == 1)
             if np.any(alive == 1):
@@ -459,9 +464,9 @@ class MBPO(RLAlgorithm):
 
         mean_rollout_length = rollout_length.mean().item()
         rollout_stats = {'mean_rollout_length': mean_rollout_length}
-        print('[ Model Rollout ] Added: {:.1e} | Model Pool: {:.1e} (max {:.1e}) | Avg Length: {:.2f}'.format(
-            sum(steps_added), self._model_pool.size, self._model_pool._max_size, mean_rollout_length
-        ))
+        # print('[ Model Rollout ] Added: {:.1e} | Model Pool: {:.1e} (max {:.1e}) | Avg Length: {:.2f}'.format(
+        #     sum(steps_added), self._model_pool.size, self._model_pool._max_size, mean_rollout_length
+        # ))
         return rollout_stats
 
     def _visualize_model(self, env, timestep):

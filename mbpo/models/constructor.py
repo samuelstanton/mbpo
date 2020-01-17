@@ -16,6 +16,7 @@ def construct_model(
 		hidden_dim=200,
 		num_networks=7,
 		num_elites=5,
+		n_inducing=256,
 		session=None
 ):
 	print(f"[ {model_type} ] Observation dim {obs_dim} | Action dim: {act_dim} | Hidden dim: {hidden_dim}")
@@ -49,7 +50,7 @@ def construct_model(
 			label_dim=rew_dim + obs_dim,
 			hidden_width=hidden_dim,
 			hidden_depth=2,
-			n_inducing=256,
+			n_inducing=n_inducing,
 			batch_size=256,
 			max_epochs_since_update=5
 		)
