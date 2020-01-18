@@ -63,7 +63,7 @@ class DeepFeatureSVGP(GP):
             batch_shape=torch.Size([label_dim])
         )
         inducing_points = torch.randn(n_inducing, feature_dim)
-        self.variational_strategy = DecoupledVariationalStrategy(
+        self.variational_strategy = VariationalStrategy(
             self, inducing_points, variational_dist, learn_inducing_locations=True
         )
 
@@ -72,6 +72,9 @@ class DeepFeatureSVGP(GP):
         self.register_buffer("input_std", torch.ones(input_dim))
         self.register_buffer("label_mean", torch.zeros(label_dim))
         self.register_buffer("label_std", torch.ones(label_dim))
+
+        self._train_ckpt = deepcopy(self.state_dict())
+        self._eval_ckpt = deepcopy(self.state_dict())
 
     def forward(self, features):
         mean = self.mean_module(features)
@@ -148,7 +151,7 @@ class DeepFeatureSVGP(GP):
 
         if early_stopping and holdout_ratio <= 0.:
             raise RuntimeError("holdout dataset required for early stopping")
-        n_val = min(int(2048), int(holdout_ratio * len(dataset)))
+        n_val = min(int(4096), int(holdout_ratio * len(dataset)))
         if n_val > 0:
             n_train = len(dataset) - n_val
             train_data, holdout_data = torch.utils.data.random_split(dataset, [n_train, n_val])
@@ -157,9 +160,16 @@ class DeepFeatureSVGP(GP):
 
         if early_stopping:
             val_x, val_y = holdout_data[:]
-            val_loss, _ = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
-        snapshot_loss = val_loss if early_stopping else 1e6
-        snapshot = (0, snapshot_loss, deepcopy(self.state_dict()))
+            eval_loss, eval_mse = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
+        if eval_loss != eval_loss or not early_stopping:
+            snapshot_loss = 1e6
+        else:
+            snapshot_loss = eval_loss
+        # snapshot_loss = eval_loss if early_stopping else 1e6
+        snapshot = (0, snapshot_loss)
+        print(f"[ SVGP ] initial holdout loss: {eval_loss:.4f}, MSE: {eval_mse:.4f}")
+
+        self.load_state_dict(self._train_ckpt)
 
         if normalize:
             train_inputs, train_labels = train_data[:]
@@ -189,7 +199,6 @@ class DeepFeatureSVGP(GP):
         print(f"[ SVGP ] training w/ objective {objective} on {len(train_data)} examples")
         optimizer = Adam(self.optim_param_groups)
         if reinit_inducing_loc:
-            self.max_epochs_since_update *= 2
             loop_metrics, snapshot = self._training_loop(
                 train_data,
                 holdout_data,
@@ -200,7 +209,6 @@ class DeepFeatureSVGP(GP):
                 early_stopping
             )
             metrics = loop_metrics
-            self.max_epochs_since_update /= 2
             print("[ SVGP ] dropping learning rate")
 
         for group in optimizer.param_groups:
@@ -214,15 +222,20 @@ class DeepFeatureSVGP(GP):
             max_epochs,
             early_stopping
         )
-        print(f"[ SVGP ] training converged after {snapshot[0]} epochs, halting")
         if reinit_inducing_loc:
             for key in metrics.keys():
                 metrics[key] += (loop_metrics[key])
         else:
             metrics = loop_metrics
 
-        del snapshot, dataset
-        self.eval()
+        print(f"[ SVGP ] holdout loss: {metrics['val_loss'][-1]:.4f}, MSE: {metrics['val_mse'][-1]:.4f}")
+        print(f"[ SVGP ] loading snapshot from epoch {snapshot[0]}")
+        self._train_ckpt = deepcopy(self.state_dict())
+        self.load_state_dict(self._eval_ckpt)
+        self._train() # TODO investigate GPyTorch load_state_dict bug
+        eval_loss, eval_mse = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
+        print(f"[ SVGP ] final holdout loss: {eval_loss:.4f}, MSE: {eval_mse:.4f}")
+        metrics['val_mse'].append(eval_mse)
         return metrics
 
     def _training_loop(
@@ -278,28 +291,27 @@ class DeepFeatureSVGP(GP):
             if exit_training or (max_epochs and epoch == max_epochs):
                 break
 
-        self.load_state_dict(snapshot[2])
-        if val_dataset:
-            _, final_mse = self._get_val_metrics(obj_fn, mse_fn, val_x, val_y)
-            metrics['val_mse'].append(final_mse)
-            print(f"[ SVGP ] holdout mse: {final_mse:.4f}")
-
         return metrics, snapshot
 
     def _get_val_metrics(self, obj_fn, mse_fn, val_x, val_y):
         with torch.no_grad():
             self.eval()
             val_pred = self._predict_full(val_x)
-            val_mse = mse_fn(val_pred.mean, val_y.t())
+            val_mean = val_pred.mean
+            # val_std = val_pred.variance.sqrt()
+            # val_pred = torch.distributions.Normal(val_mean, val_std)
+            # val_loss = -val_pred.log_prob(val_y.t()).mean()
             val_loss = -obj_fn(val_pred, val_y.t()).sum()
+            val_mse = mse_fn(val_mean, val_y.t())
         return [val_loss.item(), val_mse.item()]
 
     def save_best(self, snapshot, epoch, current_loss):
         exit_training = False
-        last_update, best_loss, _ = snapshot
+        last_update, best_loss = snapshot
         improvement = (best_loss - current_loss) / abs(best_loss)
         if improvement > 0.001:
-            snapshot = (epoch, current_loss, deepcopy(self.state_dict()))
+            snapshot = (epoch, current_loss)
+            self._eval_ckpt = deepcopy(self.state_dict())
         if epoch == snapshot[0] + self.max_epochs_since_update:
             exit_training = True
         return snapshot, exit_training
@@ -339,14 +351,14 @@ class DeepFeatureSVGP(GP):
 
         gp_params = {
             'params': gp_params,
-            'lr': 5e-2
+            'lr': 1e-2
         }
         other_params = {
             'params': other_params,
-            'lr': 5e-2
+            'lr': 1e-2
         }
         nn_params = {
             'params': nn_params,
-            'lr': 5e-3
+            'lr': 1e-3
         }
         return [gp_params, other_params, nn_params]
