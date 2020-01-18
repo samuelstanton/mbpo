@@ -110,7 +110,7 @@ class MBPO(RLAlgorithm):
             num_networks=num_networks,
             num_elites=num_elites
         )
-        self._max_batch_size = 4096 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
+        self._max_batch_size = 2048 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
 
