@@ -52,7 +52,7 @@ def construct_model(
 			hidden_depth=2,
 			n_inducing=n_inducing,
 			batch_size=256,
-			max_epochs_since_update=5
+			max_epochs_since_update=4
 		)
 
 	else:
