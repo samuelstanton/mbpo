@@ -71,6 +71,7 @@ class MBPO(RLAlgorithm):
             model_type='TensorflowBNN',
             hidden_dim=200,
             n_inducing=256,
+            max_epochs_since_update=1,
             max_model_t=None,
             val_data=None,
             **kwargs,
@@ -109,7 +110,8 @@ class MBPO(RLAlgorithm):
             hidden_dim=hidden_dim,
             n_inducing=n_inducing,
             num_networks=num_networks,
-            num_elites=num_elites
+            num_elites=num_elites,
+            max_epochs_since_update=max_epochs_since_update,
         )
         self._max_batch_size = 5000 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
         self._static_fns = static_fns

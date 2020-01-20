@@ -17,6 +17,7 @@ def construct_model(
 		num_networks=7,
 		num_elites=5,
 		n_inducing=256,
+		max_epochs_since_update=1,
 		session=None
 ):
 	print(f"[ {model_type} ] Observation dim {obs_dim} | Action dim: {act_dim} | Hidden dim: {hidden_dim}")
@@ -40,7 +41,7 @@ def construct_model(
             minibatch_size=256,
             lr=1e-3,
             logvar_penalty_coeff=1e-2,
-            max_epochs_since_update=5,
+            max_epochs_since_update=max_epochs_since_update,
         )
 
 	elif model_type == 'DeepFeatureSVGP':
@@ -52,7 +53,7 @@ def construct_model(
 			hidden_depth=2,
 			n_inducing=n_inducing,
 			batch_size=256,
-			max_epochs_since_update=4
+			max_epochs_since_update=max_epochs_since_update
 		)
 
 	else:

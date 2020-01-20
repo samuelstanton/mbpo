@@ -32,7 +32,8 @@ params = {
         'rand_lengths': False,
         'model_type': 'DeepFeatureSVGP',
         'hidden_dim': 2048,
-        'n_inducing': 128
+        'n_inducing': 256,
+        'max_epochs_since_update': 1
     }
 }
 

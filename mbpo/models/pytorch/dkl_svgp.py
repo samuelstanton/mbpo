@@ -63,7 +63,7 @@ class DeepFeatureSVGP(GP):
             batch_shape=torch.Size([label_dim])
         )
         inducing_points = torch.randn(n_inducing, feature_dim)
-        self.variational_strategy = DecoupledVariationalStrategy(
+        self.variational_strategy = VariationalStrategy(
             self, inducing_points, variational_dist, learn_inducing_locations=True
         )
 
@@ -199,6 +199,8 @@ class DeepFeatureSVGP(GP):
         print(f"[ SVGP ] training w/ objective {objective} on {len(train_data)} examples")
         optimizer = Adam(self.optim_param_groups)
         if reinit_inducing_loc:
+            temp = self.max_epochs_since_update
+            self.max_epochs_since_update = 8
             loop_metrics, snapshot = self._training_loop(
                 train_data,
                 holdout_data,
@@ -209,6 +211,7 @@ class DeepFeatureSVGP(GP):
                 early_stopping
             )
             metrics = loop_metrics
+            self.max_epochs_since_update = temp
             print("[ SVGP ] dropping learning rate")
 
         for group in optimizer.param_groups:
@@ -236,6 +239,7 @@ class DeepFeatureSVGP(GP):
         eval_loss, eval_mse = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
         print(f"[ SVGP ] final holdout loss: {eval_loss:.4f}, MSE: {eval_mse:.4f}")
         metrics['holdout_mse'] = eval_mse
+        self.eval()
         return metrics
 
     def _training_loop(
@@ -275,15 +279,15 @@ class DeepFeatureSVGP(GP):
                 optimizer.step()
 
                 if avg_train_loss:
-                    avg_train_loss = alpha * loss.detach() + (1 - alpha) * avg_train_loss
+                    avg_train_loss = alpha * loss.item() + (1 - alpha) * avg_train_loss
                 else:
-                    avg_train_loss = loss.detach()
+                    avg_train_loss = loss.item()
 
             if val_dataset:
                 val_loss, val_mse = self._get_val_metrics(obj_fn, mse_fn, val_x, val_y)
                 metrics['val_loss'].append(val_loss)
                 metrics['val_mse'].append(val_mse)
-            conv_metric = val_loss if early_stopping else avg_train_loss.item()
+            conv_metric = val_loss if early_stopping else avg_train_loss
 
             snapshot, exit_training = self.save_best(snapshot, epoch, conv_metric)
             epoch += 1
