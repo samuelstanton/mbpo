@@ -22,7 +22,6 @@ from mbpo.utils.writer import Writer
 from mbpo.utils.visualization import visualize_policy
 from mbpo.utils.logging import Progress
 import mbpo.utils.filesystem as filesystem
-from mbpo.models.pytorch.bnn import PytorchBNN
 
 
 def td_target(reward, discount, next_value):
@@ -73,6 +72,7 @@ class MBPO(RLAlgorithm):
             hidden_dim=200,
             n_inducing=256,
             max_model_t=None,
+            val_data=None,
             **kwargs,
     ):
         """
@@ -101,6 +101,7 @@ class MBPO(RLAlgorithm):
 
         obs_dim = np.prod(training_environment.observation_space.shape)
         act_dim = np.prod(training_environment.action_space.shape)
+        self._model_type = model_type
         self._model = construct_model(
             model_type=model_type,
             obs_dim=obs_dim,
@@ -113,6 +114,7 @@ class MBPO(RLAlgorithm):
         self._max_batch_size = 5000 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
+        self.val_data = val_data
 
         self._rollout_schedule = rollout_schedule
         self._max_model_t = max_model_t
@@ -419,7 +421,21 @@ class MBPO(RLAlgorithm):
             early_stopping=True,
             reinit_inducing_loc=reinit_inducing_loc,
         )
-        return {'val_mse': model_metrics['val_mse'][-1]}
+
+        metrics = dict(
+            holdout_mse=model_metrics['holdout_mse'],
+            validation_mse=self._validate_model()
+        )
+        return metrics
+
+    def _validate_model(self):
+        if self.val_data is None:
+            raise RuntimeError("no validation data found")
+        inputs, targets = self.val_data
+        mean, _ = self._model.predict(inputs)
+        val_mse = ((mean - targets) ** 2).sum(1).mean(0)
+        print(f"[ Model Validation ] MSE: {val_mse:.4f}")
+        return val_mse
 
     def _rollout_model(self, rollout_batch_size, rand_lengths=False, **kwargs):
         # print('[ Model Rollout ] Starting | Epoch: {} | Max Length: {} | Batch size: {}'.format(

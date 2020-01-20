@@ -63,7 +63,7 @@ class DeepFeatureSVGP(GP):
             batch_shape=torch.Size([label_dim])
         )
         inducing_points = torch.randn(n_inducing, feature_dim)
-        self.variational_strategy = VariationalStrategy(
+        self.variational_strategy = DecoupledVariationalStrategy(
             self, inducing_points, variational_dist, learn_inducing_locations=True
         )
 
@@ -235,7 +235,7 @@ class DeepFeatureSVGP(GP):
         self._train() # TODO investigate GPyTorch load_state_dict bug
         eval_loss, eval_mse = self._get_val_metrics(obj_fn, torch.nn.MSELoss(), val_x, val_y)
         print(f"[ SVGP ] final holdout loss: {eval_loss:.4f}, MSE: {eval_mse:.4f}")
-        metrics['val_mse'].append(eval_mse)
+        metrics['holdout_mse'] = eval_mse
         return metrics
 
     def _training_loop(

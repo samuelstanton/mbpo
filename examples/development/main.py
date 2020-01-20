@@ -5,6 +5,7 @@ import pickle
 import sys
 
 import tensorflow as tf
+import torch
 from ray import tune
 
 from softlearning.environments.utils import get_environment_from_params
@@ -67,6 +68,13 @@ class ExperimentRunner(tune.Trainable):
         domain = environment_params['training']['domain']
         static_fns = mbpo.static[domain.lower()]
         ####
+
+        try:
+            mbpo_dir = variant["mbpo_dir"]
+            val_data = torch.load(mbpo_dir + f"/examples/config/{domain.lower()}/validation_data.pkl")
+        except:
+            print("no validation data found")
+            val_data = None
  
         self.algorithm = get_algorithm_from_variant(
             variant=self._variant,
@@ -78,7 +86,8 @@ class ExperimentRunner(tune.Trainable):
             pool=replay_pool,
             static_fns=static_fns,
             sampler=sampler,
-            session=self._session)
+            session=self._session,
+            val_data=val_data)
 
         initialize_tf_variables(self._session, only_uninitialized=True)
 

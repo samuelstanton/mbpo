@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'baseline_svgp_v3',
+    'exp_name': 'baseline_svgp_v4',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -32,7 +32,7 @@ params = {
         'rand_lengths': False,
         'model_type': 'DeepFeatureSVGP',
         'hidden_dim': 2048,
-        'n_inducing': 256
+        'n_inducing': 128
     }
 }
 

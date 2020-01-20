@@ -204,6 +204,8 @@ def run_example_local(example_module_name, example_argv, local_mode=False):
     variant_spec = example_module.get_variant_spec(example_args)
     trainable_class = example_module.get_trainable_class(example_args)
 
+    variant_spec["mbpo_dir"] = os.getcwd()
+
     experiment_id, experiment = generate_experiment(
         trainable_class, variant_spec, example_args)
     experiments = {experiment_id: experiment}
