@@ -347,8 +347,8 @@ class DeepFeatureSVGP(GP):
         gp_params, nn_params, other_params = [], [], []
         for name, param in self.named_parameters():
             if 'nn' in name:
-                continue
-                # nn_params.append(param)
+                # continue
+                nn_params.append(param)
             elif 'raw' in name:
                 gp_params.append(param)
             else:
@@ -363,12 +363,13 @@ class DeepFeatureSVGP(GP):
             'lr': 1e-2
         }
         nn_groups = self.nn.optim_param_groups
-        for group in nn_groups:
-            group['lr'] = 1e-3
-        # nn_params = {
-        #     'params': nn_params,
-        #     'lr': 1e-3,
-        #     'weight_decay': 5e-4
-        # }
-        groups = nn_groups + [gp_params, other_params]
+        # for group in nn_groups:
+        #     group['lr'] = 1e-3
+        nn_params = {
+            'params': nn_params,
+            'lr': 1e-3,
+            'weight_decay': 1e-3
+        }
+        # groups = nn_groups + [gp_params, other_params]
+        groups = [nn_params, other_params, gp_params]
         return groups

@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'baseline_svgp_v4',
+    'exp_name': 'baseline_svgp_v6',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -31,8 +31,8 @@ params = {
         'rollout_schedule': [20, 150, 1, 1],
         'rand_lengths': False,
         'model_type': 'DeepFeatureSVGP',
-        'hidden_dim': 200,
-        'hidden_depth': 4,
+        'hidden_dim': 2048,
+        'hidden_depth': 2,
         'n_inducing': 256,
         'max_epochs_since_update': 1,
     }
