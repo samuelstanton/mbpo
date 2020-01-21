@@ -425,7 +425,7 @@ class BNN:
         if timer: timer.stamp('bnn_end')
 
         val_loss = (np.sort(holdout_losses)[:self.num_elites]).mean()
-        model_metrics = {'holdout_mse': [val_loss]}
+        model_metrics = {'holdout_mse': val_loss}
         print('[ BNN ] Holdout', np.sort(holdout_losses), val_loss)
         return OrderedDict(model_metrics)
         # return np.sort(holdout_losses)[]

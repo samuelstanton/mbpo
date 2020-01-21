@@ -31,7 +31,8 @@ params = {
         'rollout_schedule': [20, 150, 1, 15],
         'rand_lengths': False,
         'model_type': 'DeepFeatureSVGP',
-        'hidden_dim': 2048,
+        'hidden_dim': 200,
+        'hidden_depth': 4,
         'n_inducing': 256,
         'max_epochs_since_update': 1
     }
