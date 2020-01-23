@@ -61,7 +61,7 @@ class MBPO(RLAlgorithm):
 
             deterministic=False,
             model_train_freq=250,
-            num_networks=7,
+            num_components=7,
             num_elites=5,
             model_retain_epochs=20,
             rollout_batch_size=100e3,
@@ -111,11 +111,11 @@ class MBPO(RLAlgorithm):
             hidden_dim=hidden_dim,
             hidden_depth=hidden_depth,
             n_inducing=n_inducing,
-            num_networks=num_networks,
+            num_components=num_components,
             num_elites=num_elites,
             max_epochs_since_update=max_epochs_since_update,
         )
-        self._max_batch_size = 5000 if model_type == "DeepFeatureSVGP" else int(rollout_batch_size)
+        self._max_batch_size = int(rollout_batch_size) if model_type == "TensorflowBNN" else int(5000)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
         self.val_data = val_data
@@ -413,19 +413,21 @@ class MBPO(RLAlgorithm):
 
     def _train_model(self, **kwargs):
         env_samples = self._pool.return_all_samples()
-        train_inputs, train_outputs = format_samples_for_training(env_samples)
+        transition_data = format_samples_for_training(env_samples)
+
         reinit_inducing_loc = True if self._total_timestep == 0 else False
-        model_metrics = self._model.train(
-            inputs=train_inputs,
-            targets=train_outputs,
+        fit_args = dict(
             pretrain=False,
             objective='pll',
-            holdout_ratio=0.2,
             normalize=True,
             early_stopping=True,
             reinit_inducing_loc=reinit_inducing_loc,
         )
-
+        model_metrics = self._model.fit(
+            transition_data,
+            holdout_ratio=0.2,
+            fit_args=fit_args,
+        )
         metrics = dict(
             holdout_mse=model_metrics['holdout_mse'],
             validation_mse=self._validate_model()
@@ -437,7 +439,7 @@ class MBPO(RLAlgorithm):
             raise RuntimeError("no validation data found")
         inputs, targets = self.val_data
         mean, _ = self._model.predict(inputs)
-        val_mse = ((mean - targets) ** 2).sum(1).mean(0)
+        val_mse = ((mean - targets) ** 2).sum(-1).mean()
         print(f"[ Model Validation ] MSE: {val_mse:.4f}")
         return val_mse
 
@@ -483,7 +485,10 @@ class MBPO(RLAlgorithm):
             obs = next_obs
 
         mean_rollout_length = rollout_length.mean().item()
-        rollout_stats = {'mean_rollout_length': mean_rollout_length}
+        rollout_stats = {
+            'mean_rollout_length': mean_rollout_length,
+            'pred_mean_std': info['dev']
+        }
         # print('[ Model Rollout ] Added: {:.1e} | Model Pool: {:.1e} (max {:.1e}) | Avg Length: {:.2f}'.format(
         #     sum(steps_added), self._model_pool.size, self._model_pool._max_size, mean_rollout_length
         # ))

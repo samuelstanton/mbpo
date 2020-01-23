@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'baseline_svgp_v6',
+    'exp_name': 'baseline_svgp_v7',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -23,14 +23,15 @@ params = {
         'model_retain_epochs': 1,
         'rollout_batch_size': 100e3,
         'deterministic': False,
-        'num_networks': 7,
-        'num_elites': 5,
         'real_ratio': 0.05,
         'target_entropy': -3,
         'max_model_t': None,
         'rollout_schedule': [20, 150, 1, 1],
         'rand_lengths': False,
-        'model_type': 'DeepFeatureSVGP',
+
+        'model_type': 'GPEnsemble',
+        'num_components': 7,
+        'num_elites': 5,
         'hidden_dim': 2048,
         'hidden_depth': 2,
         'n_inducing': 256,

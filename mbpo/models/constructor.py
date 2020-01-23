@@ -2,10 +2,11 @@ import numpy as np
 import tensorflow as tf
 import torch
 
+from model_zoo import PytorchBNN, DeepFeatureSVGP, GPEnsemble
 from mbpo.models.fc import FC
 from mbpo.models.bnn import BNN
-from mbpo.models.pytorch.dkl_svgp import DeepFeatureSVGP
-from mbpo.models.pytorch.bnn import PytorchBNN
+# from mbpo.models.pytorch.dkl_svgp import DeepFeatureSVGP
+# from mbpo.models.pytorch.bnn import PytorchBNN
 
 
 def construct_model(
@@ -15,30 +16,33 @@ def construct_model(
 		rew_dim=1,
 		hidden_dim=200,
 		hidden_depth=4,
-		num_networks=7,
+		num_components=7,
 		num_elites=5,
 		n_inducing=256,
 		max_epochs_since_update=1,
 		session=None
 ):
+	input_dim = obs_dim + act_dim
+	target_dim = rew_dim + obs_dim
+
 	print(f"[ {model_type} ] Observation dim {obs_dim} | Action dim: {act_dim} | Hidden dim: {hidden_dim}")
 	if model_type == 'TensorflowBNN':
-		params = {'name': 'BNN', 'num_networks': num_networks, 'num_elites': num_elites, 'sess': session}
+		params = {'name': 'BNN', 'num_networks': num_components, 'num_elites': num_elites, 'sess': session}
 		model = BNN(params)
-		model.add(FC(hidden_dim, input_dim=obs_dim+act_dim, activation="swish", weight_decay=0.000025))
+		model.add(FC(hidden_dim, input_dim=input_dim, activation="swish", weight_decay=0.000025))
 		model.add(FC(hidden_dim, activation="swish", weight_decay=0.00005))
 		model.add(FC(hidden_dim, activation="swish", weight_decay=0.000075))
 		model.add(FC(hidden_dim, activation="swish", weight_decay=0.000075))
-		model.add(FC(obs_dim+rew_dim, weight_decay=0.0001))
+		model.add(FC(target_dim, weight_decay=0.0001))
 		model.finalize(tf.train.AdamOptimizer, {"learning_rate": 0.001})
 
 	elif model_type == 'PytorchBNN':
 		model = PytorchBNN(
-            input_shape=torch.Size([obs_dim + act_dim]),
-            label_shape=torch.Size([rew_dim + obs_dim]),
+            input_shape=torch.Size([input_dim]),
+            label_shape=torch.Size([target_dim]),
             hidden_width=hidden_dim,
             hidden_depth=hidden_depth,
-            ensemble_size=num_networks,
+            ensemble_size=num_components,
             minibatch_size=256,
             lr=1e-3,
             logvar_penalty_coeff=1e-2,
@@ -47,15 +51,26 @@ def construct_model(
 
 	elif model_type == 'DeepFeatureSVGP':
 		model = DeepFeatureSVGP(
-			input_dim=obs_dim + act_dim,
-			feature_dim=rew_dim + obs_dim,
-			label_dim=rew_dim + obs_dim,
+			input_dim=input_dim,
+			feature_dim=target_dim,
+			label_dim=target_dim,
 			hidden_width=hidden_dim,
 			hidden_depth=hidden_depth,
 			n_inducing=n_inducing,
 			batch_size=256,
 			max_epochs_since_update=max_epochs_since_update
 		)
+
+	elif model_type == 'GPEnsemble':
+		gp_params = dict(
+			feature_dim=target_dim,
+			hidden_width=hidden_dim,
+			hidden_depth=hidden_depth,
+			n_inducing=n_inducing,
+			batch_size=256,
+			max_epochs_since_update=max_epochs_since_update
+		)
+		model = GPEnsemble(input_dim, target_dim, num_components, num_elites, gp_params)
 
 	else:
 		raise RuntimeError("unrecognized model type")

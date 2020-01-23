@@ -299,7 +299,7 @@ class BNN:
     # Model Methods #
     #################
 
-    def train(self, inputs, targets,
+    def fit(self, data,
               batch_size=32, max_epochs=None, max_epochs_since_update=5,
               hide_progress=False, holdout_ratio=0.0, max_logging=5000, max_grad_updates=None, timer=None, max_t=None,
               **kwargs):
@@ -315,6 +315,7 @@ class BNN:
 
         Returns: None
         """
+        inputs, targets = data
         self._max_epochs_since_update = max_epochs_since_update
         self._start_train()
         break_train = False
