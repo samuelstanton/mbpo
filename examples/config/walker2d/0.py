@@ -34,5 +34,10 @@ params = {
         'hidden_dim': 200,
         'num_components': 7,
         'num_elites': 5,
+        'max_epochs_since_update': 5,
+
+        'holdout_ratio': 0.2,
+        'bootstrap_size': 1.,
+        'bootstrap_freq': 250
     }
 }

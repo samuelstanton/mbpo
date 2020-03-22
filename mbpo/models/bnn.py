@@ -299,9 +299,9 @@ class BNN:
     # Model Methods #
     #################
 
-    def fit(self, data,
-              batch_size=32, max_epochs=None, max_epochs_since_update=5,
-              hide_progress=False, holdout_ratio=0.0, max_logging=5000, max_grad_updates=None, timer=None, max_t=None,
+    def fit(self, dataset,
+              batch_size=256, max_epochs=None, max_epochs_since_update=5,
+              hide_progress=False, max_logging=5000, max_grad_updates=None, timer=None, max_t=None,
               **kwargs):
         """Trains/Continues network training
 
@@ -315,28 +315,37 @@ class BNN:
 
         Returns: None
         """
-        inputs, targets = data
         self._max_epochs_since_update = max_epochs_since_update
+        holdout_ratio = dataset.holdout_ratio
         self._start_train()
         break_train = False
 
-        def shuffle_rows(arr):
-            idxs = np.argsort(np.random.uniform(size=arr.shape), axis=-1)
-            return arr[np.arange(arr.shape[0])[:, None], idxs]
+        # def shuffle_rows(arr):
+        #     idxs = np.argsort(np.random.uniform(size=arr.shape), axis=-1)
+        #     return arr[np.arange(arr.shape[0])[:, None], idxs]
+        #
+        # # Split into training and holdout sets
+        # inputs, targets = dataset.train_data
+        # num_holdout = min(int(inputs.shape[0] * holdout_ratio), max_logging)
+        # permutation = np.random.permutation(inputs.shape[0])
+        # inputs, holdout_inputs = inputs[permutation[num_holdout:]], inputs[permutation[:num_holdout]]
+        # targets, holdout_targets = targets[permutation[num_holdout:]], targets[permutation[:num_holdout]]
+        # idxs = np.random.randint(inputs.shape[0], size=[self.num_nets, inputs.shape[0]])
 
-        # Split into training and holdout sets
-        num_holdout = min(int(inputs.shape[0] * holdout_ratio), max_logging)
-        permutation = np.random.permutation(inputs.shape[0])
-        inputs, holdout_inputs = inputs[permutation[num_holdout:]], inputs[permutation[:num_holdout]]
-        targets, holdout_targets = targets[permutation[num_holdout:]], targets[permutation[:num_holdout]]
-        holdout_inputs = np.tile(holdout_inputs[None], [self.num_nets, 1, 1])
-        holdout_targets = np.tile(holdout_targets[None], [self.num_nets, 1, 1])
+        def shuffle_cols(arr):
+            index = np.argsort(np.random.rand(*arr.shape), axis=1)
+            return np.take_along_axis(arr, index, axis=1)
+
+        idxs = dataset.bootstrap_idxs
+        inputs, targets = dataset.train_data
+        holdout_inputs, holdout_targets = dataset.holdout_data
+        holdout_inputs = np.tile(holdout_inputs, [self.num_nets, 1, 1])
+        holdout_targets = np.tile(holdout_targets, [self.num_nets, 1, 1])
 
         print('[ BNN ] Training {} | Holdout: {}'.format(inputs.shape, holdout_inputs.shape))
         with self.sess.as_default():
             self.scaler.fit(inputs)
 
-        idxs = np.random.randint(inputs.shape[0], size=[self.num_nets, inputs.shape[0]])
         if hide_progress:
             progress = Silent()
         else:
@@ -361,8 +370,9 @@ class BNN:
                 )
                 grad_updates += 1
 
-            idxs = shuffle_rows(idxs)
-            if not hide_progress:
+            # idxs = shuffle_rows(idxs)
+            idxs = shuffle_cols(idxs)
+            if not hide_progress:  # TODO git issue about this bug
                 if holdout_ratio < 1e-12:
                     losses = self.sess.run(
                             self.mse_loss,
@@ -388,10 +398,10 @@ class BNN:
                                 self.sy_train_targ: holdout_targets
                             }
                         )
-                    named_losses = [['M{}'.format(i), losses[i]] for i in range(len(losses))]
-                    named_holdout_losses = [['V{}'.format(i), holdout_losses[i]] for i in range(len(holdout_losses))]
+                    named_losses = [[f"M{i}", f"{losses[i]:.4f}"] for i in range(len(losses))]
+                    named_holdout_losses = [[f"V{i}", f"{holdout_losses[i]:.4f}"] for i in range(len(holdout_losses))]
                     named_losses = named_losses + named_holdout_losses + [['T', time.time() - t0]]
-                    progress.set_description(named_losses)
+                    # progress.set_description(named_losses)
 
                     break_train = self._save_best(epoch, holdout_losses)
 

@@ -23,6 +23,8 @@ from mbpo.utils.visualization import visualize_policy
 from mbpo.utils.logging import Progress
 import mbpo.utils.filesystem as filesystem
 
+from model_zoo.utils.dataset import Dataset
+
 
 def td_target(reward, discount, next_value):
     return reward + discount * next_value
@@ -75,6 +77,9 @@ class MBPO(RLAlgorithm):
             max_epochs_since_update=1,
             max_model_t=None,
             val_data=None,
+            holdout_ratio=0.2,
+            bootstrap_size=1.,
+            bootstrap_freq=250,
             **kwargs,
     ):
         """
@@ -115,6 +120,8 @@ class MBPO(RLAlgorithm):
             num_elites=num_elites,
             max_epochs_since_update=max_epochs_since_update,
         )
+        self._model_dataset = Dataset(holdout_ratio, n_bootstraps=num_components, bootstrap_size=bootstrap_size)
+        self._bootstrap_freq = bootstrap_freq
         self._max_batch_size = int(rollout_batch_size) if model_type == "TensorflowBNN" else int(5000)
         self._static_fns = static_fns
         self.fake_env = FakeEnv(self._model, self._static_fns)
@@ -414,6 +421,15 @@ class MBPO(RLAlgorithm):
     def _train_model(self, **kwargs):
         env_samples = self._pool.return_all_samples()
         transition_data = format_samples_for_training(env_samples)
+        n_old_train = len(self._model_dataset)
+        if transition_data[0].shape[0] > n_old_train:
+            self._model_dataset.add_new_data(
+                transition_data[0][n_old_train:],
+                transition_data[1][n_old_train:]
+            )
+        if self._total_timestep % self._bootstrap_freq == 0:
+            print("[ Dynamics Dataset ] resetting bootstraps")
+            self._model_dataset.reset_bootstraps()
 
         reinit_inducing_loc = True if self._total_timestep == 0 else False
         fit_args = dict(
@@ -422,10 +438,10 @@ class MBPO(RLAlgorithm):
             normalize=True,
             early_stopping=True,
             reinit_inducing_loc=reinit_inducing_loc,
+            max_steps=250,
         )
         model_metrics = self._model.fit(
-            transition_data,
-            holdout_ratio=0.2,
+            self._model_dataset,
             fit_args=fit_args,
         )
         metrics = dict(

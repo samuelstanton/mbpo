@@ -5,7 +5,7 @@ params = {
     'task': 'v2',
 
     'log_dir': '~/ray_mbpo/',
-    'exp_name': 'baseline_svgp_v7',
+    'exp_name': 'baseline_svgp_v8',
 
     'kwargs': {
         'epoch_length': 1000,
@@ -32,9 +32,13 @@ params = {
         'model_type': 'GPEnsemble',
         'num_components': 7,
         'num_elites': 5,
-        'hidden_dim': 2048,
-        'hidden_depth': 2,
+        'hidden_dim': 512,
+        'hidden_depth': 4,
         'n_inducing': 256,
-        'max_epochs_since_update': 1,
+        'max_epochs_since_update': 5,
+
+        'holdout_ratio': 0.2,
+        'bootstrap_size': 0.75,
+        'bootstrap_freq': 250
     }
 }
